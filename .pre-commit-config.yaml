@@ -1,0 +1,19 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: Ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: ruff-check
+        name: Ruff fixer
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: tests
+        name: Unit tests
+        entry: uv run python -m unittest discover -s tests -v
+        language: system
+        pass_filenames: false
+        always_run: true

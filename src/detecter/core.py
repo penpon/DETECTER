@@ -3,19 +3,22 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import math
 import os
 import shutil
+import statistics
 import sys
 import tarfile
 import tempfile
 import time
 import urllib.request
 import warnings
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 UFD_COMMIT = "030495aea3300a8b54c0ec37ec7fe1dd7e63c619"
 UFD_ARCHIVE_URL = (
@@ -29,6 +32,10 @@ UFD_DEFAULT_THRESHOLD = 0.5
 MAX_INPUT_BYTES = 50 * 1024 * 1024
 MAX_IMAGE_PIXELS = 100_000_000
 SUPPORTED_FORMATS = {"JPEG", "PNG", "WEBP"}
+UFD_TILE_SIZE = 224
+UFD_TILE_MAX_AXIS = 8
+UFD_TILE_BATCH_SIZE = 16
+PIXEL_GRID_SIZE = 32
 AI_SOURCE_SUFFIXES = (
     "/trainedAlgorithmicMedia",
     "/compositeWithTrainedAlgorithmicMedia",
@@ -81,6 +88,138 @@ def inspect_image(path: Path, *, max_bytes: int = MAX_INPUT_BYTES) -> dict[str, 
         "bytes": byte_size,
         "sha256": file_sha256(path),
     }
+
+
+def tile_bounds(
+    width: int,
+    height: int,
+    *,
+    tile_size: int = UFD_TILE_SIZE,
+    max_tiles_per_axis: int = UFD_TILE_MAX_AXIS,
+) -> list[tuple[int, int, int, int]]:
+    """Return a deterministic, gap-free grid covering the whole image."""
+    if width <= 0 or height <= 0:
+        raise ValueError("画像の幅と高さは1以上にしてください")
+    if tile_size <= 0 or max_tiles_per_axis <= 0:
+        raise ValueError("タイル設定は1以上にしてください")
+    max_tiles_per_axis = min(max_tiles_per_axis, UFD_TILE_MAX_AXIS)
+
+    columns = min(max_tiles_per_axis, max(1, math.ceil(width / tile_size)))
+    rows = min(max_tiles_per_axis, max(1, math.ceil(height / tile_size)))
+    x_edges = [width * index // columns for index in range(columns + 1)]
+    y_edges = [height * index // rows for index in range(rows + 1)]
+    return [
+        (x_edges[column], y_edges[row], x_edges[column + 1], y_edges[row + 1])
+        for row in range(rows)
+        for column in range(columns)
+    ]
+
+
+def quantized_pixel_grid(
+    path: Path, *, size: int = PIXEL_GRID_SIZE
+) -> list[list[list[int]]]:
+    """Downsample an image with BOX averaging and quantize RGB to 0..15."""
+    if size <= 0:
+        raise ValueError("画素グリッドのサイズは1以上にしてください")
+    with Image.open(path) as source:
+        image = source.convert("RGB").resize((size, size), Image.Resampling.BOX)
+        pixels = image.load()
+        return [
+            [
+                [int(channel) // 16 for channel in pixels[column, row]]
+                for column in range(size)
+            ]
+            for row in range(size)
+        ]
+
+
+def create_derived_jpeg(
+    path: Path,
+    *,
+    directory: Path | None = None,
+    max_bytes: int = MAX_INPUT_BYTES,
+) -> Path:
+    """Create the experiment's rotated, 1024px-long-side, quality-75 JPEG."""
+    resolved = path.expanduser().resolve()
+    inspect_image(resolved, max_bytes=max_bytes)
+    with tempfile.NamedTemporaryFile(
+        prefix="detecter-derived-",
+        suffix=".jpg",
+        dir=str(directory) if directory is not None else None,
+        delete=False,
+    ) as temporary:
+        target = Path(temporary.name)
+    try:
+        with Image.open(resolved) as source:
+            image = ImageOps.exif_transpose(source).convert("RGB")
+            long_side = max(image.size)
+            if long_side != 1024:
+                scale = 1024 / long_side
+                image = image.resize(
+                    (
+                        max(1, round(image.width * scale)),
+                        max(1, round(image.height * scale)),
+                    ),
+                    Image.Resampling.LANCZOS,
+                )
+            image.save(target, format="JPEG", quality=75)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    return target
+
+
+def summarize_c2pa(c2pa_result: dict[str, Any]) -> dict[str, Any]:
+    """Keep only the C2PA facts needed by the Jev experiment."""
+    status = c2pa_result.get("status")
+    if status == "skipped":
+        status = "absent"
+    if status not in {"present", "absent", "error"}:
+        status = "error"
+
+    validation_state = c2pa_result.get("validation_state")
+    if status != "present" or validation_state not in {"Valid", "Trusted", "Invalid"}:
+        validation_state = "not_reported"
+    trust_state = {
+        "Trusted": "trusted",
+        "Valid": "valid_untrusted",
+        "Invalid": "invalid",
+    }.get(validation_state, "not_reported")
+    source_types = sorted(
+        {
+            source_type
+            for source_type in c2pa_result.get("digital_source_types", [])
+            if isinstance(source_type, str) and source_type.endswith(AI_SOURCE_SUFFIXES)
+        }
+    )
+    return {
+        "status": status,
+        "validation_state": validation_state,
+        "trust_state": trust_state,
+        "ai_source_types": source_types,
+        "data_hash": _data_hash_status(c2pa_result),
+    }
+
+
+def _data_hash_status(c2pa_result: dict[str, Any]) -> str:
+    validation_results = c2pa_result.get("validation_results")
+    if validation_results is None:
+        return "not_reported"
+    matches: list[bool] = []
+    for key, value in _walk_values(validation_results):
+        text = f"{key} {value}".lower().replace("-", "_")
+        if not any(token in text for token in ("datahash", "data_hash", "data hash")):
+            continue
+        if isinstance(value, bool):
+            matches.append(value)
+            continue
+        if any(token in text for token in ("mismatch", "invalid", "fail", "error")):
+            matches.append(False)
+        elif any(token in text for token in ("match", "valid", "success")):
+            matches.append(True)
+    if not matches:
+        return "not_reported"
+    return "match" if all(matches) else "mismatch"
 
 
 def _walk_values(value: Any):
@@ -276,13 +415,21 @@ class UfdDetector:
             ]
         )
 
+    def score_images(self, images: Sequence[Image.Image]) -> list[float]:
+        tensors = self.torch.stack(
+            [self.transform(image.convert("RGB")) for image in images]
+        ).to(self.device)
+        with self.torch.inference_mode():
+            features = self.backbone.encode_image(tensors)
+            scores = self.head(features).sigmoid().flatten().tolist()
+        return [float(score) for score in scores]
+
+    def score_image(self, image: Image.Image) -> float:
+        return self.score_images([image])[0]
+
     def score(self, path: Path) -> float:
         with Image.open(path) as image:
-            tensor = self.transform(image.convert("RGB")).unsqueeze(0).to(self.device)
-        with self.torch.inference_mode():
-            features = self.backbone.encode_image(tensor)
-            score = self.head(features).sigmoid().item()
-        return float(score)
+            return self.score_image(image)
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -291,6 +438,141 @@ class UfdDetector:
             "clip_model": UFD_CLIP_MODEL,
             "device": str(self.device),
         }
+
+
+def _score_tile_batch(
+    detector: Any,
+    images: Sequence[Image.Image],
+) -> list[float]:
+    score_images = getattr(detector, "score_images", None)
+    if callable(score_images):
+        return [float(score) for score in score_images(images)]
+
+    score_image = getattr(detector, "score_image", None)
+    if callable(score_image):
+        return [float(score_image(image)) for image in images]
+
+    score = getattr(detector, "score", None)
+    if not callable(score):
+        raise TypeError("UFD検知器にスコア関数がありません")
+    with tempfile.TemporaryDirectory(prefix="detecter-tiles-") as temporary:
+        paths: list[Path] = []
+        for index, image in enumerate(images):
+            path = Path(temporary) / f"tile-{index}.png"
+            image.save(path, format="PNG")
+            paths.append(path)
+        return [float(score(path)) for path in paths]
+
+
+def analyze_full_area_tiles(
+    path: Path,
+    detector: Any,
+    *,
+    threshold: float = UFD_DEFAULT_THRESHOLD,
+    max_bytes: int = MAX_INPUT_BYTES,
+    tile_size: int = UFD_TILE_SIZE,
+    max_tiles_per_axis: int = UFD_TILE_MAX_AXIS,
+    batch_size: int = UFD_TILE_BATCH_SIZE,
+) -> dict[str, Any]:
+    """Run the unchanged UFD detector over a gap-free full-image tile grid."""
+    if batch_size <= 0:
+        raise ValueError("タイルのバッチサイズは1以上にしてください")
+    max_tiles_per_axis = min(max_tiles_per_axis, UFD_TILE_MAX_AXIS)
+    batch_size = min(batch_size, UFD_TILE_BATCH_SIZE)
+    resolved = path.expanduser().resolve()
+    media = inspect_image(resolved, max_bytes=max_bytes)
+    bounds = tile_bounds(
+        media["width"],
+        media["height"],
+        tile_size=tile_size,
+        max_tiles_per_axis=max_tiles_per_axis,
+    )
+    columns = min(max_tiles_per_axis, max(1, math.ceil(media["width"] / tile_size)))
+    rows = min(max_tiles_per_axis, max(1, math.ceil(media["height"] / tile_size)))
+    try:
+        with Image.open(resolved) as source:
+            image = source.convert("RGB")
+            scores: list[float] = []
+            for start in range(0, len(bounds), batch_size):
+                batch_bounds = bounds[start : start + batch_size]
+                batch = [
+                    image.crop(box).resize(
+                        (UFD_TILE_SIZE, UFD_TILE_SIZE), Image.Resampling.LANCZOS
+                    )
+                    for box in batch_bounds
+                ]
+                scores.extend(_score_tile_batch(detector, batch))
+    except Exception as error:  # noqa: BLE001
+        return {
+            "status": "error",
+            "tile_count": len(bounds),
+            "rows": rows,
+            "columns": columns,
+            "error_type": type(error).__name__,
+        }
+
+    if len(scores) != len(bounds):
+        return {
+            "status": "error",
+            "tile_count": len(bounds),
+            "rows": rows,
+            "columns": columns,
+            "error_type": "DetectorResultLengthError",
+        }
+    tiles = [
+        {
+            "index": index,
+            "row": index // columns,
+            "column": index % columns,
+            "bounds": list(box),
+            "raw_score": score,
+            "predicted_ai": score >= threshold,
+        }
+        for index, (box, score) in enumerate(zip(bounds, scores, strict=True))
+    ]
+    return {
+        "status": "ok",
+        "rows": rows,
+        "columns": columns,
+        "tile_count": len(tiles),
+        "tile_size": UFD_TILE_SIZE,
+        "threshold": threshold,
+        "mean": statistics.fmean(scores),
+        "median": statistics.median(scores),
+        "min": min(scores),
+        "max": max(scores),
+        "stddev": statistics.pstdev(scores),
+        "above_threshold_count": sum(score >= threshold for score in scores),
+        "tiles": tiles,
+    }
+
+
+def build_jev_state(
+    media: dict[str, Any],
+    c2pa_result: dict[str, Any],
+    tile_result: dict[str, Any],
+    *,
+    input_variant: str,
+) -> dict[str, Any]:
+    """Build the text-only state without file identity or local verdict fields."""
+    return {
+        "image": {
+            "variant": input_variant,
+            "format": media.get("format"),
+            "width": media.get("width"),
+            "height": media.get("height"),
+            "mode": media.get("mode"),
+        },
+        "c2pa": summarize_c2pa(c2pa_result),
+        "universal_fake_detect": tile_result,
+        "limitations": [
+            "Jev receives text-only state; no image bytes or base64 are sent.",
+            "UniversalFakeDetect scores are uncalibrated detector scores, not probabilities of correctness.",
+            "All tile scores use the same UniversalFakeDetect detector.",
+            "SynthID was not checked.",
+            "No detected signal is not proof that the image is a real photograph.",
+        ],
+    }
 
 
 def provisional_verdict(

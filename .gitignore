@@ -10,3 +10,9 @@ __pycache__/
 build/
 dist/
 results/
+
+# Generated investigation artifacts
+*-ai-image-detection-grilling.html
+*-ai-image-detection-grilling.json
+samples/generated/
+samples/real/
