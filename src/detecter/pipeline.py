@@ -220,10 +220,16 @@ def _preprocessing_stage(
             if isinstance(source_id, str):
                 seen_by_source.setdefault(source_id, set()).add(key)
     missing = sorted(expected - seen, key=str)
+    required_sources = {
+        row.get("source_image_id", image_id) for image_id, row in rows_by_id.items()
+    }
     incomplete_sources = sorted(
-        source_id
-        for source_id in rows_by_id
-        if not expected <= seen_by_source.get(source_id, set())
+        (
+            source_id
+            for source_id in required_sources
+            if not expected <= seen_by_source.get(source_id, set())
+        ),
+        key=str,
     )
     if incomplete_sources:
         invalid.append("preprocessing_conditions_missing_for_image")
