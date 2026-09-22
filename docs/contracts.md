@@ -3,7 +3,8 @@
 出発点は `215e109` です。既存 `analyze` の schema_version=1、
 `media`、`c2pa`、`universal_fake_detect`、`verdict` とJevのA/B比較を維持します。
 以下は独立した評価処理のJSON契約です。各issueは専用モジュール、テスト、
-`docs/` の説明を所有し、共通CLIへの追加は小さな呼出しだけにします。
+`docs/` の説明を所有します。#2〜#10は `python -m detecter.<専用モジュール>`
+で独立実行できます。共通CLIの `detecter <コマンド>` への接続は #11 がまとめて担当します。
 
 ## 評価台帳（1画像につきJSON Linesの1行）
 

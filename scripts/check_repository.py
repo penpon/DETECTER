@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -38,8 +39,10 @@ def main() -> None:
         }, name
         assert not path.name.startswith(".env"), name
         assert path.stat().st_size < 5 * 1024 * 1024, f"5MiB以上の追跡ファイル: {name}"
-        private_key_header = b"-----BEGIN " + b"PRIVATE KEY-----"
-        assert private_key_header not in path.read_bytes(), name
+        private_key_header = (
+            rb"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE" + rb" KEY-----"
+        )
+        assert not re.search(private_key_header, path.read_bytes()), name
     with tempfile.TemporaryDirectory(prefix="detecter-smoke-") as temporary:
         image = Path(temporary) / "synthetic.png"
         Image.new("RGB", (32, 24), "white").save(image)
