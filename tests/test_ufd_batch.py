@@ -1,14 +1,43 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
 from detecter.core import file_sha256
-from detecter.ufd_batch import measure, measure_batch
+from detecter.ufd_batch import main, measure, measure_batch
 
 
 class UfdBatchTests(unittest.TestCase):
+    def test_cli_resolves_relative_image_path_and_writes_jsonl(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "image.png"
+            Image.new("RGB", (8, 8), "white").save(image)
+            ledger, output = root / "ledger.jsonl", root / "output.jsonl"
+            ledger.write_text(
+                json.dumps(
+                    {
+                        "image_id": "image",
+                        "path": "image.png",
+                        "sha256": file_sha256(image),
+                        "label": "real",
+                    }
+                )
+                + "\n"
+            )
+            with patch("detecter.ufd_batch.UfdDetector") as detector:
+                detector.return_value.score.return_value = 0.25
+                self.assertEqual(
+                    main(["--ledger", str(ledger), "--output", str(output)]), 0
+                )
+            record = json.loads(output.read_text())
+            self.assertEqual(record["status"], "ok")
+            self.assertEqual(record["raw_score"], 0.25)
+            self.assertNotIn("label", record)
+
     def test_batch_excludes_labels_and_keeps_failures(self):
         class Detector:
             def score(self, path):
