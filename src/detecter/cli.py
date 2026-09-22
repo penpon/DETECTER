@@ -209,8 +209,10 @@ def apply_decision(
         reasons.append("image_hash_missing")
     config_data: dict[str, Any] = config if config is not None else {}
     threshold: Any = config_data.get("threshold")
-    if config_error is not None or config is None:
-        reasons.append("config_missing" if config is None else "config_invalid")
+    if config_error is not None:
+        reasons.extend(("config_invalid", "config_missing"))
+    elif config is None:
+        reasons.append("config_missing")
     else:
         try:
             validate_config(config, measurement, usage=usage)
@@ -348,6 +350,7 @@ def main(argv: list[str] | None = None) -> int:
         return dispatched
     args = parser().parse_args(raw)
     decision_config: dict[str, Any] | None = None
+    decision_config_error: str | None = None
     if args.decision_config is not None:
         try:
             value = json.loads(args.decision_config.read_text(encoding="utf-8"))
@@ -357,7 +360,7 @@ def main(argv: list[str] | None = None) -> int:
             decision_config = value
         except (OSError, TypeError, json.JSONDecodeError, ValueError) as error:
             print(f"判定設定を適用できません: {error}", file=sys.stderr)
-            return 2
+            decision_config_error = f"{type(error).__name__}: {error}"
     images = collect_images(args.inputs)
     if not images:
         print("解析対象の画像がありません。", file=sys.stderr)
@@ -429,7 +432,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
         detector = None
-        if not args.skip_ufd:
+        if not args.skip_ufd and decision_config_error is None:
             print("UniversalFakeDetectを準備しています…", file=sys.stderr)
             try:
                 detector = UfdDetector(cache_dir=args.cache_dir, device=args.device)
@@ -479,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
                     record,
                     decision_config,
                     usage=args.decision_usage,
+                    config_error=decision_config_error,
                 )
                 if input_variant == "derived_jpeg":
                     record["path"] = str(display_path.expanduser().resolve())
@@ -541,6 +545,8 @@ def main(argv: list[str] | None = None) -> int:
             close = getattr(jev_client, "close", None)
             if callable(close):
                 close()
+        if decision_config_error is not None:
+            return 2
         return 1 if failed else 0
     finally:
         if derived_directory is not None:

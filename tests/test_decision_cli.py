@@ -192,7 +192,32 @@ class DecisionCliTests(unittest.TestCase):
                     ]
                 )
             self.assertEqual(code, 2)
-            self.assertEqual(output.getvalue(), "")
+            record = json.loads(output.getvalue())
+            self.assertEqual(record["decision"]["state"], "inconclusive")
+            self.assertIn("config_invalid", record["decision"]["reasons"])
+
+    def test_missing_config_file_emits_a_hold_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "image.png"
+            Image.new("RGB", (8, 8), "white").save(image)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main(
+                    [
+                        "analyze",
+                        str(image),
+                        "--decision-config",
+                        str(image.with_name("missing.json")),
+                        "--skip-ufd",
+                        "--skip-c2pa",
+                        "--output",
+                        "-",
+                    ]
+                )
+            self.assertEqual(code, 2)
+            record = json.loads(output.getvalue())
+            self.assertEqual(record["decision"]["state"], "inconclusive")
+            self.assertIn("config_missing", record["decision"]["reasons"])
 
 
 if __name__ == "__main__":
