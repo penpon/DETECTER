@@ -167,6 +167,18 @@ def _decision_reason(error: ValueError) -> str:
     return "config_invalid"
 
 
+def _provenance_requirement_satisfied(name: str, value: Any) -> bool:
+    expected: dict[str, set[Any]] = {
+        "status": {"present"},
+        "signature_state": {"valid"},
+        "trust_state": {"trusted"},
+        "binding_state": {"match"},
+        "confirmation_state": {"trusted", "cryptographically_valid"},
+        "confirmed": {True},
+    }
+    return value in expected[name] if name in expected else bool(value)
+
+
 def apply_decision(
     record: dict[str, Any],
     config: dict[str, Any] | None,
@@ -193,10 +205,12 @@ def apply_decision(
             reasons.append("measurement_hash_mismatch")
         else:
             measurement["sha256"] = media["sha256"]
+    else:
+        reasons.append("image_hash_missing")
     config_data: dict[str, Any] = config if config is not None else {}
     threshold: Any = config_data.get("threshold")
     if config_error is not None or config is None:
-        reasons.append("config_invalid")
+        reasons.append("config_missing" if config is None else "config_invalid")
     else:
         try:
             validate_config(config, measurement, usage=usage)
@@ -212,7 +226,8 @@ def apply_decision(
             value: Any = provenance
             for part in str(required).split("."):
                 value = value.get(part) if isinstance(value, dict) else None
-            if not value:
+            leaf = str(required).rsplit(".", 1)[-1]
+            if not _provenance_requirement_satisfied(leaf, value):
                 reasons.append(f"provenance_{required.replace('.', '_')}_missing")
     if (
         provenance.get("binding_state") == "mismatch"
@@ -233,6 +248,12 @@ def apply_decision(
         reasons.append("partial_generation_edit")
     result = {
         "schema_version": 1,
+        "image_id": record.get("image_id", record.get("path")),
+        "sha256": media.get("sha256"),
+        "model": measurement.get("model"),
+        "model_version": measurement.get("model_version"),
+        "weights_version": measurement.get("weights_version"),
+        "preprocessing_version": measurement.get("preprocessing_version"),
         "config_id": config_data.get("config_id") if config else None,
         "calibration_id": config_data.get("calibration_id") if config else None,
         "threshold": threshold,
@@ -297,8 +318,35 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
+def _dispatch_command(raw: list[str]) -> int | None:
+    if not raw or raw[0] == "analyze":
+        return None
+    commands = {
+        "ledger": ("detecter.ledger", "main"),
+        "c2pa-provenance": ("detecter.c2pa_provenance", "main"),
+        "community-forensics": ("detecter.community_forensics", "main"),
+        "ufd-batch": ("detecter.ufd_batch", "main"),
+        "compare": ("detecter.comparison", "main"),
+        "evaluate": ("detecter.evaluation", "main"),
+        "calibrate": ("detecter.calibration", "main"),
+        "derive-jpeg": ("detecter.derive_jpeg", "main"),
+        "synthid-manual": ("detecter.synthid_manual", "main"),
+    }
+    target = commands.get(raw[0])
+    if target is None:
+        return None
+    import importlib
+
+    module = importlib.import_module(target[0])
+    return int(getattr(module, target[1])(raw[1:]))
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    dispatched = _dispatch_command(raw)
+    if dispatched is not None:
+        return dispatched
+    args = parser().parse_args(raw)
     decision_config: dict[str, Any] | None = None
     if args.decision_config is not None:
         try:
@@ -426,12 +474,12 @@ def main(argv: list[str] | None = None) -> int:
                         "error": f"{type(error).__name__}: {error}",
                     }
                 record["input_variant"] = input_variant
-                if args.decision_config is not None:
-                    record["decision"] = apply_decision(
-                        record,
-                        decision_config,
-                        usage=args.decision_usage,
-                    )
+                record["image_id"] = str(image.expanduser().resolve())
+                record["decision"] = apply_decision(
+                    record,
+                    decision_config,
+                    usage=args.decision_usage,
+                )
                 if input_variant == "derived_jpeg":
                     record["path"] = str(display_path.expanduser().resolve())
 

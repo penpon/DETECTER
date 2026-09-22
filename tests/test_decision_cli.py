@@ -84,7 +84,7 @@ class DecisionCliTests(unittest.TestCase):
             record, None, config_error="decision config is missing"
         )
         self.assertEqual(missing["state"], "inconclusive")
-        self.assertIn("config_invalid", missing["reasons"])
+        self.assertIn("config_missing", missing["reasons"])
         hashed = {
             "media": {"sha256": "c" * 64},
             "universal_fake_detect": measurement(sha256="d" * 64),
@@ -93,6 +93,45 @@ class DecisionCliTests(unittest.TestCase):
             "measurement_hash_mismatch",
             apply_decision(hashed, decision_config())["reasons"],
         )
+        for field, value in (
+            ("signature_state", "invalid"),
+            ("trust_state", "untrusted"),
+            ("status", "error"),
+        ):
+            with self.subTest(field=field):
+                record = {
+                    "media": {"sha256": "c" * 64},
+                    "c2pa": {field: value},
+                    "universal_fake_detect": measurement(),
+                }
+                decision = apply_decision(
+                    record, decision_config(required_provenance=[field])
+                )
+                self.assertEqual(decision["state"], "inconclusive")
+
+    def test_common_cli_dispatches_evaluate_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("ledger", "measurements", "decisions"):
+                (root / name).write_text("", encoding="utf-8")
+            output = root / "report.json"
+            self.assertEqual(
+                main(
+                    [
+                        "evaluate",
+                        "--ledger",
+                        str(root / "ledger"),
+                        "--measurements",
+                        str(root / "measurements"),
+                        "--decisions",
+                        str(root / "decisions"),
+                        "--output",
+                        str(output),
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(json.loads(output.read_text())["target_count"], 0)
 
     def test_cli_uses_config_threshold_and_keeps_provenance_separate(self):
         with tempfile.TemporaryDirectory() as directory:

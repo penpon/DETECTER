@@ -2,7 +2,8 @@
 
 調整用データから作成した判定設定を指定すると、画像解析は設定のモデル版・重み版・
 前処理版・設定識別子を計測結果と照合してから、`score >= threshold` を適用します。
-設定を指定しない既存の解析は従来の暫定しきい値を使います。
+設定を指定しない場合、既存の暫定 `verdict` は互換性のため残りますが、
+新しい `decision` は `inconclusive` として設定欠落を記録します。
 
 ```sh
 uv run detecter analyze image.jpg \
@@ -23,6 +24,16 @@ UFDの低スコアは実写の証明になりません。C2PAの未信頼、確�
 `--decision-usage evaluation`（既定）は候補設定を評価へ適用できます。
 `--decision-usage production` は `status: validated` かつ `usage: production` の設定だけを許可します。
 候補設定を本番用途へ自動昇格させる処理はありません。
+
+後続処理の専用入口も共通CLIへ接続しています。
+
+```sh
+uv run detecter ledger validate data/ledger.jsonl
+uv run detecter evaluate --ledger data/ledger.jsonl \
+  --measurements results/measurements.jsonl --decisions results/decisions.jsonl --output -
+uv run detecter calibrate --ledger data/ledger.jsonl \
+  --measurements results/measurements.jsonl --split tuning --output decision-config.json
+```
 
 ```sh
 uv run python -m unittest discover -s tests -p 'test_decision_cli.py' -v
