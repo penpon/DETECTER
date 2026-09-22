@@ -21,6 +21,25 @@ Python 3.11と[uv](https://docs.astral.sh/uv/)を使います。
 uv sync
 ```
 
+新しいクローンでは次の手順で固定した依存関係と非機密入力を確認できます。
+
+```sh
+git clone https://github.com/penpon/DETECTER.git
+cd DETECTER
+uv python install 3.11
+uv sync --frozen
+uv run python -m unittest discover -s tests -v
+uv run python scripts/check_repository.py
+```
+
+最後のコマンドは一時ディレクトリに単色画像を作り、`analyze --skip-ufd --output -`
+を実行します。画像は終了時に削除します。写真・評価台帳・結果・重み・秘密鍵を追跡していないことも検査します。
+APIキーは環境変数から注入してください。コミット前に `git diff --cached --stat` で対象一覧を確認し、
+`git diff --cached` でAPIキー・トークン・個人情報などが本文へ混入していないことも確認してください。
+自動検査は既知の秘密鍵ヘッダーを検出しますが、任意形式の秘密情報を完全には検出しません。
+Issue #1の出発点はコミット `215e109` です。後続処理の形式と分担は
+[共有契約](docs/contracts.md)に固定しています。
+
 UniversalFakeDetectを初めて実行すると、固定した公式コミットのソース約1.6MBと、CLIP ViT-L/14のモデルファイルをダウンロードします。以後はキャッシュを使います。Paperspaceでは `DETECTER_CACHE_DIR=/storage/detecter-cache` を指定すると、再起動後もモデルを再利用できます。
 
 ## 実行
