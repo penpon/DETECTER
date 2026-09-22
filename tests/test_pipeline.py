@@ -88,17 +88,35 @@ def records(ledger: list[dict], score: float = 0.8) -> tuple[list[dict], list[di
 
 def processing(ledger: list[dict]) -> tuple[list[dict], list[dict]]:
     comparisons = [
-        {"image_id": row["image_id"], "model": model}
+        {
+            "image_id": row["image_id"],
+            "sha256": row["sha256"],
+            "model": model,
+            "status": "ok",
+        }
         for row in ledger
         for model in ("ufd", "community-forensics-384")
     ]
-    conditions = [
-        {"condition": {"operation": "jpeg", "jpeg_quality": quality}}
-        for quality in (95, 85, 75)
-    ] + [
-        {"condition": {"operation": "resize", "long_side": size}}
-        for size in (1024, 512)
-    ]
+    conditions = []
+    for row in ledger:
+        conditions.extend(
+            {
+                "source_image_id": row["image_id"],
+                "source_sha256": row["sha256"],
+                "status": "created",
+                "condition": {"operation": "jpeg", "jpeg_quality": quality},
+            }
+            for quality in (95, 85, 75)
+        )
+        conditions.extend(
+            {
+                "source_image_id": row["image_id"],
+                "source_sha256": row["sha256"],
+                "status": "created",
+                "condition": {"operation": "resize", "long_side": size},
+            }
+            for size in (1024, 512)
+        )
     return comparisons, conditions
 
 
@@ -180,6 +198,39 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(report["status"], "insufficient_evidence")
         self.assertIn("decision_config_id_mismatch", report["unverified"])
+
+    def test_failed_or_mismatched_comparison_is_not_complete(self):
+        ledger = rows(real=3000, generated=10)
+        measurements, decisions = records(ledger)
+        comparisons, conditions = processing(ledger)
+        comparisons[0]["status"] = "error"
+        comparisons[1]["sha256"] = "f" * 64
+        report = run_pipeline(
+            ledger,
+            config(),
+            measurements=measurements,
+            decisions=decisions,
+            comparisons=comparisons,
+            derived_conditions=conditions,
+        )
+        self.assertEqual(report["status"], "insufficient_evidence")
+        self.assertEqual(report["stages"]["comparison"]["status"], "insufficient")
+
+    def test_mixed_synthetic_and_verified_rows_cannot_prove_performance(self):
+        ledger = rows(real=3000, generated=10)
+        ledger[0]["source"] = "synthetic-test"
+        measurements, decisions = records(ledger)
+        comparisons, conditions = processing(ledger)
+        report = run_pipeline(
+            ledger,
+            config(),
+            measurements=measurements,
+            decisions=decisions,
+            comparisons=comparisons,
+            derived_conditions=conditions,
+        )
+        self.assertEqual(report["status"], "insufficient_evidence")
+        self.assertIn("synthetic_data_not_performance_evidence", report["unverified"])
 
     def test_cli_writes_evidence_report_without_external_models(self):
         with tempfile.TemporaryDirectory() as directory:

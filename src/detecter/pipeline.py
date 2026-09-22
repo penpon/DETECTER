@@ -152,27 +152,40 @@ def _ledger_shape(
 
 
 def _comparison_stage(
-    records: list[dict[str, Any]] | None, ids: set[str]
+    records: list[dict[str, Any]] | None,
+    rows_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     if records is None:
         return {"status": "insufficient", "reason": "comparison_not_provided"}
     by_id: dict[str, set[str]] = {}
+    invalid: list[str] = []
     for row in records:
         image_id, model = row.get("image_id"), row.get("model")
         if isinstance(image_id, str) and isinstance(model, str):
             by_id.setdefault(image_id, set()).add(model)
+            ledger_row = rows_by_id.get(image_id)
+            if ledger_row is None or row.get("sha256") != ledger_row.get("sha256"):
+                invalid.append("comparison_hash_mismatch")
+            if row.get("status") != "ok":
+                invalid.append("comparison_model_failed")
     required = {"ufd", "community-forensics-384"}
-    complete = all(by_id.get(image_id, set()) >= required for image_id in ids)
+    complete = (
+        all(by_id.get(image_id, set()) >= required for image_id in rows_by_id)
+        and not invalid
+    )
     return {
         "status": "ok" if complete else "insufficient",
         "image_count": len(by_id),
         "required_models": sorted(required),
-        "reason": None if complete else "comparison_missing_model_or_image",
+        "reason": None
+        if complete
+        else (sorted(set(invalid)) or "comparison_missing_model_or_image"),
     }
 
 
 def _preprocessing_stage(
     records: list[dict[str, Any]] | None,
+    rows_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     if records is None:
         return {
@@ -187,21 +200,41 @@ def _preprocessing_stage(
         ("resize", 512),
     }
     seen: set[tuple[Any, Any]] = set()
+    seen_by_source: dict[str, set[tuple[Any, Any]]] = {}
+    invalid: list[str] = []
     for row in records:
         condition = row.get("condition") if isinstance(row, dict) else None
+        source_id = row.get("source_image_id") if isinstance(row, dict) else None
+        source_hash = row.get("source_sha256") if isinstance(row, dict) else None
+        parent = rows_by_id.get(source_id)
+        if parent is None or parent.get("sha256") != source_hash:
+            invalid.append("preprocessing_source_hash_mismatch")
+        if row.get("status") not in {"created", "duplicate", "unchanged"}:
+            invalid.append("preprocessing_condition_failed")
         if isinstance(condition, dict):
-            seen.add(
-                (
-                    condition.get("operation"),
-                    condition.get("jpeg_quality") or condition.get("long_side"),
-                )
+            key = (
+                condition.get("operation"),
+                condition.get("jpeg_quality") or condition.get("long_side"),
             )
+            seen.add(key)
+            if isinstance(source_id, str):
+                seen_by_source.setdefault(source_id, set()).add(key)
     missing = sorted(expected - seen, key=str)
+    incomplete_sources = sorted(
+        source_id
+        for source_id in rows_by_id
+        if not expected <= seen_by_source.get(source_id, set())
+    )
+    if incomplete_sources:
+        invalid.append("preprocessing_conditions_missing_for_image")
     return {
-        "status": "ok" if not missing else "insufficient",
+        "status": "ok" if not missing and not invalid else "insufficient",
         "condition_count": len(records),
         "missing_conditions": [list(item) for item in missing],
-        "reason": None if not missing else "preprocessing_condition_missing",
+        "incomplete_source_count": len(incomplete_sources),
+        "reason": None
+        if not missing and not invalid
+        else sorted(set(invalid)) or "preprocessing_condition_missing",
     }
 
 
@@ -278,8 +311,15 @@ def run_pipeline(
         "split": split,
         "reasons": shape_reasons,
     }
-    report["stages"]["preprocessing"] = _preprocessing_stage(derived_conditions)
-    report["stages"]["comparison"] = _comparison_stage(comparisons, ids)
+    rows_by_id = {
+        row["image_id"]: row
+        for row in ledger
+        if row.get("split") == split and isinstance(row.get("image_id"), str)
+    }
+    report["stages"]["preprocessing"] = _preprocessing_stage(
+        derived_conditions, rows_by_id
+    )
+    report["stages"]["comparison"] = _comparison_stage(comparisons, rows_by_id)
     if leakage:
         report["unverified"].append("final_evaluation_overlaps_calibration")
     if shape_reasons:
@@ -434,7 +474,7 @@ def run_pipeline(
             "upper_bound": one_sided_upper_bound(0, 3000),
             "target": TARGET_FPR_UPPER,
         }
-        synthetic = all(
+        synthetic = any(
             str(row.get("source", "")).lower().startswith("synthetic")
             for row in ledger
             if row.get("split") == split
@@ -524,6 +564,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ledger = read_ledger(args.ledger)
         config = json.loads(args.decision_config.read_text(encoding="utf-8"))
+        effective_ledger = ledger
         measurements = read_jsonl(args.measurements) if args.measurements else None
         decisions = read_jsonl(args.decisions) if args.decisions else None
         comparisons = read_jsonl(args.comparison) if args.comparison else None
@@ -534,24 +575,35 @@ def main(argv: list[str] | None = None) -> int:
         if args.derive_directory is not None:
             from .derive_jpeg import derive_images
 
-            _, derived = derive_images(args.ledger, args.derive_directory)
+            derived_rows, derived = derive_images(args.ledger, args.derive_directory)
+            effective_ledger = [*ledger, *derived_rows]
+        measurement_inputs = [
+            {
+                "image_id": row.get("image_id"),
+                "path": row.get("path"),
+                "sha256": row.get("sha256"),
+                "source_sha256": row.get("source_sha256", row.get("sha256")),
+                "history": row.get("history", []),
+            }
+            for row in effective_ledger
+            if row.get("split") == args.split
+        ]
         if args.run_ufd:
-            from .ufd_batch import load_inputs, measure_batch
+            from .ufd_batch import measure_batch
 
             measurements = measure_batch(
-                load_inputs(args.ledger), cache_dir=args.cache_dir, device=args.device
+                measurement_inputs, cache_dir=args.cache_dir, device=args.device
             )
         if args.run_comparison:
             from .comparison import compare_records
-            from .ufd_batch import load_inputs
 
             comparisons = compare_records(
-                load_inputs(args.ledger), cache_dir=args.cache_dir, device=args.device
+                measurement_inputs, cache_dir=args.cache_dir, device=args.device
             )
             if measurements is None:
                 measurements = [row for row in comparisons if row.get("model") == "ufd"]
         report = run_pipeline(
-            ledger,
+            effective_ledger,
             config,
             measurements=measurements,
             decisions=decisions,
