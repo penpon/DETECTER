@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "detecter"
+version = "0.1.0"
+description = "Minimal C2PA and UniversalFakeDetect image inspection spike"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "c2pa-python==0.37.10",
+  "cryptography>=41,<47",
+  "ftfy>=6,<7",
+  "numpy<2",
+  "Pillow>=10,<12",
+  "regex>=2024.5.15",
+  "setuptools>=68,<81",
+  "torch==2.2.2",
+  "torchvision==0.17.2",
+  "tqdm>=4.66,<5",
+]
+
+[project.scripts]
+detecter = "detecter.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
