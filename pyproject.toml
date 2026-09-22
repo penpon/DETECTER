@@ -27,6 +27,9 @@ dev = [
   "ruff>=0.9,<1",
 ]
 
+[project.optional-dependencies]
+community-forensics = ["timm==1.0.15", "safetensors==0.5.3"]
+
 [project.scripts]
 detecter = "detecter.cli:main"
 
