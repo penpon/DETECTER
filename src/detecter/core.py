@@ -178,6 +178,18 @@ def summarize_c2pa(c2pa_result: dict[str, Any]) -> dict[str, Any]:
         status = "error"
 
     validation_state = c2pa_result.get("validation_state")
+    if "confirmation_state" in c2pa_result:
+        if c2pa_result.get("confirmation_state") in {"hash_mismatch", "unverifiable"}:
+            validation_state = "Invalid"
+        elif c2pa_result.get("confirmed"):
+            validation_state = "Trusted"
+        elif (
+            c2pa_result.get("signature_state") == "valid"
+            and c2pa_result.get("binding_state") == "match"
+        ):
+            validation_state = "Valid"
+        else:
+            validation_state = "not_reported"
     if status != "present" or validation_state not in {"Valid", "Trusted", "Invalid"}:
         validation_state = "not_reported"
     trust_state = {
@@ -202,38 +214,118 @@ def summarize_c2pa(c2pa_result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _data_hash_status(c2pa_result: dict[str, Any]) -> str:
-    validation_results = c2pa_result.get("validation_results")
-    if validation_results is None:
-        return "not_reported"
-    matches: list[bool] = []
-    for key, value in _walk_values(validation_results):
-        text = f"{key} {value}".lower().replace("-", "_")
-        if not any(token in text for token in ("datahash", "data_hash", "data hash")):
+    state = _c2pa_verification(c2pa_result.get("validation_results"))["binding_state"]
+    return state if state in {"match", "mismatch"} else "not_reported"
+
+
+def _c2pa_verification(
+    results: Any, *, explicit_anchors: bool = False
+) -> dict[str, Any]:
+    # Only the active manifest binds this file; ingredient results describe other files.
+    active = results.get("activeManifest", {}) if isinstance(results, dict) else {}
+    if not isinstance(active, dict):
+        active = {}
+    codes: dict[str, set[str]] = {}
+    malformed = False
+    for bucket in ("success", "failure", "informational"):
+        entries = active.get(bucket, [])
+        codes[bucket] = set()
+        if not isinstance(entries, list):
+            malformed = True
             continue
-        if isinstance(value, bool):
-            matches.append(value)
-            continue
-        if any(token in text for token in ("mismatch", "invalid", "fail", "error")):
-            matches.append(False)
-        elif any(token in text for token in ("match", "valid", "success")):
-            matches.append(True)
-    if not matches:
-        return "not_reported"
-    return "match" if all(matches) else "mismatch"
+        for item in entries:
+            if isinstance(item, dict) and isinstance(item.get("code"), str):
+                codes[bucket].add(item["code"])
+            else:
+                malformed = True
+    success = codes.get("success", set())
+    reported = set().union(*codes.values())
+    signature = "unknown"
+    if "claimSignature.validated" in success:
+        signature = "valid"
+    if reported & {"claimSignature.mismatch", "claimSignature.missing"}:
+        signature = "invalid"
+    trust = "not_checked" if not explicit_anchors else "unknown"
+    if explicit_anchors and "signingCredential.trusted" in success:
+        trust = "trusted"
+    trust_failures = {
+        "signingCredential.untrusted",
+        "signingCredential.invalid",
+        "signingCredential.expired",
+        "signingCredential.revoked",
+    }
+    if reported & trust_failures:
+        trust = "untrusted"
+    binding = "unknown"
+    hash_types = ("dataHash", "bmffHash", "boxesHash")
+    if success & {f"assertion.{kind}.match" for kind in hash_types}:
+        binding = "match"
+    if reported & {f"assertion.{kind}.mismatch" for kind in hash_types}:
+        binding = "mismatch"
+    reasons = []
+    if signature != "valid":
+        reasons.append(f"signature_{signature}")
+    if trust != "trusted":
+        reasons.append(f"signer_{trust}")
+    if binding != "match":
+        reasons.append(
+            "asset_hash_mismatch" if binding == "mismatch" else "asset_binding_unknown"
+        )
+    if codes.get("failure"):
+        reasons.append("validation_failed")
+    if malformed:
+        reasons.append("invalid_validation_results")
+    if binding == "mismatch":
+        state = "hash_mismatch"
+    elif (
+        malformed
+        or signature != "valid"
+        or (codes.get("failure", set()) - trust_failures)
+    ):
+        state = "unverifiable"
+    elif binding == "unknown":
+        state = "binding_unknown"
+    elif trust == "untrusted":
+        state = "untrusted"
+    elif trust == "trusted":
+        state = "trusted"
+    else:
+        state = "cryptographically_valid"
+    return {
+        "signature_state": signature,
+        "trust_state": trust,
+        "binding_state": binding,
+        "confirmation_state": state,
+        "confirmed": state == "trusted",
+        "reasons": reasons,
+    }
 
 
-def _walk_values(value: Any):
-    if isinstance(value, dict):
-        for key, child in value.items():
-            yield key, child
-            yield from _walk_values(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _walk_values(child)
+def _unavailable_c2pa(status: str) -> dict[str, Any]:
+    state = {"skipped": "not_checked", "absent": "absent", "error": "unverifiable"}[
+        status
+    ]
+    return {
+        "status": status,
+        "manifest_present": False,
+        "signature_state": "not_checked" if status == "skipped" else "unknown",
+        "trust_state": "not_checked",
+        "binding_state": "not_checked" if status == "skipped" else "unknown",
+        "generation_scope": "unknown",
+        "confirmation_state": state,
+        "confirmed": False,
+        "cryptographically_valid": False,
+        "trusted": False,
+        "reasons": [f"c2pa_{state}"],
+    }
 
 
-def inspect_c2pa(path: Path, *, trust_anchors: Path | None = None) -> dict[str, Any]:
+def inspect_c2pa(
+    path: Path, *, trust_anchors: Path | None = None, check: bool = True
+) -> dict[str, Any]:
     """Read embedded C2PA data without fetching remote manifests or OCSP."""
+    if not check:
+        return _unavailable_c2pa("skipped")
     try:
         import c2pa
 
@@ -242,6 +334,7 @@ def inspect_c2pa(path: Path, *, trust_anchors: Path | None = None) -> dict[str, 
                 "verify_after_reading": True,
                 "remote_manifest_fetch": False,
                 "ocsp_fetch": False,
+                "verify_cert_anchors": trust_anchors is not None,
             }
         }
         settings = None
@@ -256,10 +349,18 @@ def inspect_c2pa(path: Path, *, trust_anchors: Path | None = None) -> dict[str, 
         try:
             reader = c2pa.Reader.try_create(path, context=context)
             if reader is None:
-                return {"status": "absent", "manifest_present": False}
+                return _unavailable_c2pa("absent")
             try:
                 store = json.loads(reader.json())
+                if not isinstance(store, dict):
+                    raise TypeError(
+                        "C2PAのマニフェストストアがオブジェクトではありません"
+                    )
                 active = reader.get_active_manifest() or {}
+                if not isinstance(active, dict):
+                    raise TypeError(
+                        "C2PAの有効マニフェストがオブジェクトではありません"
+                    )
                 validation_state = reader.get_validation_state()
                 validation_results = reader.get_validation_results()
             finally:
@@ -271,30 +372,71 @@ def inspect_c2pa(path: Path, *, trust_anchors: Path | None = None) -> dict[str, 
     # c2pa-python can surface native-library, parse, filesystem, and settings errors.
     except Exception as error:  # noqa: BLE001
         return {
-            "status": "error",
-            "manifest_present": False,
+            **_unavailable_c2pa("error"),
             "error": f"{type(error).__name__}: {error}",
         }
 
+    # Do not promote ingredient history or arbitrary nested metadata to an asset claim.
+    action_records = []
+    assertions = active.get("assertions", [])
+    for assertion in assertions if isinstance(assertions, list) else []:
+        if not isinstance(assertion, dict):
+            continue
+        label = assertion.get("label", "")
+        data = assertion.get("data")
+        if (
+            not isinstance(label, str)
+            or label not in {"c2pa.actions", "c2pa.actions.v2"}
+            or not isinstance(data, dict)
+        ):
+            continue
+        entries = data.get("actions", [])
+        if isinstance(entries, list):
+            action_records.extend(entry for entry in entries if isinstance(entry, dict))
     source_types = sorted(
         {
-            value
-            for key, value in _walk_values(active)
-            if key in {"digitalSourceType", "digital_source_type"}
-            and isinstance(value, str)
+            entry["digitalSourceType"]
+            for entry in action_records
+            if isinstance(entry.get("digitalSourceType"), str)
         }
     )
     actions = sorted(
         {
-            value
-            for key, value in _walk_values(active)
-            if key == "action" and isinstance(value, str)
+            entry["action"]
+            for entry in action_records
+            if isinstance(entry.get("action"), str)
         }
     )
+    generation_scope = "unknown"
+    for entry in action_records:
+        source = entry.get("digitalSourceType", "")
+        if not isinstance(source, str):
+            continue
+        if source.endswith("/compositeWithTrainedAlgorithmicMedia") or (
+            entry.get("action") == "c2pa.edited"
+            and source.endswith("/trainedAlgorithmicMedia")
+        ):
+            generation_scope = "partial"
+            break
+        if entry.get("action") == "c2pa.created" and source.endswith(
+            "/trainedAlgorithmicMedia"
+        ):
+            generation_scope = "full"
     ai_source_assertion = any(
         source_type.endswith(AI_SOURCE_SUFFIXES) for source_type in source_types
     )
-    signature_info = active.get("signature_info") or {}
+    signature_info = active.get("signature_info")
+    if not isinstance(signature_info, dict):
+        signature_info = {}
+    verification = _c2pa_verification(
+        validation_results, explicit_anchors=trust_anchors is not None
+    )
+    if validation_state == "Invalid":
+        verification["confirmed"] = False
+        if verification["confirmation_state"] not in {"hash_mismatch", "untrusted"}:
+            verification["confirmation_state"] = "unverifiable"
+        if "validation_failed" not in verification["reasons"]:
+            verification["reasons"].append("validation_failed")
     return {
         "status": "present",
         "manifest_present": True,
@@ -302,12 +444,14 @@ def inspect_c2pa(path: Path, *, trust_anchors: Path | None = None) -> dict[str, 
         "claim_generator": active.get("claim_generator"),
         "issuer": signature_info.get("issuer"),
         "validation_state": validation_state,
-        "cryptographically_valid": validation_state in {"Valid", "Trusted"},
-        "trusted": validation_state == "Trusted",
+        "cryptographically_valid": verification["signature_state"] == "valid",
+        "trusted": verification["trust_state"] == "trusted",
+        **verification,
         "validation_results": validation_results,
         "actions": actions,
         "digital_source_types": source_types,
         "ai_source_assertion": ai_source_assertion,
+        "generation_scope": generation_scope,
     }
 
 
@@ -578,9 +722,10 @@ def build_jev_state(
 def provisional_verdict(
     c2pa_result: dict[str, Any], ufd_result: dict[str, Any]
 ) -> dict[str, Any]:
-    if (
-        c2pa_result.get("status") == "present"
-        and c2pa_result.get("validation_state") == "Invalid"
+    if c2pa_result.get("status") == "present" and (
+        c2pa_result.get("validation_state") == "Invalid"
+        or c2pa_result.get("confirmation_state")
+        in {"hash_mismatch", "binding_unknown", "unverifiable"}
     ):
         return {
             "state": "inconclusive",
@@ -589,12 +734,17 @@ def provisional_verdict(
         }
     if (
         c2pa_result.get("status") == "present"
-        and c2pa_result.get("trusted")
+        and c2pa_result.get("confirmed")
         and c2pa_result.get("ai_source_assertion")
     ):
         return {
             "state": "ai_evidence_confirmed",
-            "reason": "信頼済みC2PAにAI生成・編集の出典種別があります",
+            "reason": (
+                "信頼済みC2PAにAIによる部分編集の記録があります。全体生成の根拠ではありません"
+                if c2pa_result.get("generation_scope") == "partial"
+                else "信頼済みC2PAにAI生成・編集の出典種別があります"
+            ),
+            "generation_scope": c2pa_result.get("generation_scope", "unknown"),
             "experimental": True,
         }
     if c2pa_result.get("status") == "present" and c2pa_result.get(
@@ -636,10 +786,8 @@ def analyze_image(
     started = time.perf_counter()
     resolved = path.expanduser().resolve()
     media = inspect_image(resolved, max_bytes=max_bytes)
-    c2pa_result = (
-        inspect_c2pa(resolved, trust_anchors=c2pa_trust_anchors)
-        if check_c2pa
-        else {"status": "skipped"}
+    c2pa_result = inspect_c2pa(
+        resolved, trust_anchors=c2pa_trust_anchors, check=check_c2pa
     )
     if detector is None:
         ufd_result: dict[str, Any] = {"status": "skipped"}
