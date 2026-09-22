@@ -187,9 +187,12 @@ def apply_decision(
     media_value = record.get("media")
     if isinstance(media_value, dict):
         media = media_value
-    if media.get("sha256") is not None:
-        measurement["sha256"] = media["sha256"]
     reasons: list[str] = []
+    if media.get("sha256") is not None:
+        if "sha256" in measurement and measurement["sha256"] != media["sha256"]:
+            reasons.append("measurement_hash_mismatch")
+        else:
+            measurement["sha256"] = media["sha256"]
     config_data: dict[str, Any] = config if config is not None else {}
     threshold: Any = config_data.get("threshold")
     if config_error is not None or config is None:

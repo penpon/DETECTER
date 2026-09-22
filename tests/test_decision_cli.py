@@ -85,6 +85,14 @@ class DecisionCliTests(unittest.TestCase):
         )
         self.assertEqual(missing["state"], "inconclusive")
         self.assertIn("config_invalid", missing["reasons"])
+        hashed = {
+            "media": {"sha256": "c" * 64},
+            "universal_fake_detect": measurement(sha256="d" * 64),
+        }
+        self.assertIn(
+            "measurement_hash_mismatch",
+            apply_decision(hashed, decision_config())["reasons"],
+        )
 
     def test_cli_uses_config_threshold_and_keeps_provenance_separate(self):
         with tempfile.TemporaryDirectory() as directory:
