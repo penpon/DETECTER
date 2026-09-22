@@ -9,6 +9,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from .calibration import validate_config
 from .core import (
     MAX_INPUT_BYTES,
     UFD_DEFAULT_THRESHOLD,
@@ -157,6 +158,91 @@ def _create_jev_client() -> Any:
     return TypeSafeClient(model=JEV_MODEL, retry=RetryPolicy(max_retries=0))
 
 
+def _decision_reason(error: ValueError) -> str:
+    message = str(error)
+    if "condition" in message:
+        return "measurement_condition_mismatch"
+    if "measurement" in message or "score" in message:
+        return "measurement_unavailable"
+    return "config_invalid"
+
+
+def apply_decision(
+    record: dict[str, Any],
+    config: dict[str, Any] | None,
+    *,
+    usage: str = "evaluation",
+    config_error: str | None = None,
+) -> dict[str, Any]:
+    """Apply one verified threshold while keeping provenance and holds separate."""
+    provenance: dict[str, Any] = {}
+    provenance_value = record.get("c2pa")
+    if isinstance(provenance_value, dict):
+        provenance = provenance_value
+    measurement_value = record.get("universal_fake_detect")
+    measurement: dict[str, Any] = (
+        dict(measurement_value) if isinstance(measurement_value, dict) else {}
+    )
+    media: dict[str, Any] = {}
+    media_value = record.get("media")
+    if isinstance(media_value, dict):
+        media = media_value
+    if media.get("sha256") is not None:
+        measurement["sha256"] = media["sha256"]
+    reasons: list[str] = []
+    config_data: dict[str, Any] = config if config is not None else {}
+    threshold: Any = config_data.get("threshold")
+    if config_error is not None or config is None:
+        reasons.append("config_invalid")
+    else:
+        try:
+            validate_config(config, measurement, usage=usage)
+        except ValueError as error:
+            reasons.append(_decision_reason(error))
+        if (
+            not isinstance(threshold, (int, float))
+            or isinstance(threshold, bool)
+            or not 0 <= threshold <= 1
+        ):
+            reasons.append("threshold_invalid")
+        for required in config_data.get("required_provenance", []):
+            value: Any = provenance
+            for part in str(required).split("."):
+                value = value.get(part) if isinstance(value, dict) else None
+            if not value:
+                reasons.append(f"provenance_{required.replace('.', '_')}_missing")
+    if (
+        provenance.get("binding_state") == "mismatch"
+        or provenance.get("confirmation_state") == "hash_mismatch"
+    ):
+        reasons.append("provenance_hash_mismatch")
+    if measurement.get("status") != "ok":
+        reasons.append("measurement_unavailable")
+    if reasons:
+        state = "inconclusive"
+    else:
+        state = (
+            "ai_likely"
+            if float(measurement["raw_score"]) >= float(threshold)
+            else "no_ai_signal_detected"
+        )
+    if provenance.get("generation_scope") == "partial" and state == "ai_likely":
+        reasons.append("partial_generation_edit")
+    result = {
+        "schema_version": 1,
+        "config_id": config_data.get("config_id") if config else None,
+        "calibration_id": config_data.get("calibration_id") if config else None,
+        "threshold": threshold,
+        "comparison": ">=",
+        "usage": usage,
+        "state": state,
+        "generation_scope": provenance.get("generation_scope", "unknown"),
+        "reasons": sorted(set(reasons)),
+    }
+    result["hold_reasons"] = result["reasons"]
+    return result
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         prog="detecter",
@@ -176,6 +262,17 @@ def parser() -> argparse.ArgumentParser:
     analyze.add_argument("--cache-dir", type=Path, default=default_cache_dir())
     analyze.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     analyze.add_argument("--threshold", type=float, default=UFD_DEFAULT_THRESHOLD)
+    analyze.add_argument(
+        "--decision-config",
+        type=Path,
+        help="calibrateで作成した検証済みの判定設定JSON",
+    )
+    analyze.add_argument(
+        "--decision-usage",
+        choices=("evaluation", "production"),
+        default="evaluation",
+        help="判定設定を評価用または本番用として検証します",
+    )
     analyze.add_argument("--skip-c2pa", action="store_true")
     analyze.add_argument(
         "--c2pa-trust-anchors",
@@ -199,11 +296,25 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    decision_config: dict[str, Any] | None = None
+    if args.decision_config is not None:
+        try:
+            value = json.loads(args.decision_config.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                raise TypeError("判定設定はJSONオブジェクトにしてください")
+            validate_config(value, usage=args.decision_usage)
+            decision_config = value
+        except (OSError, TypeError, json.JSONDecodeError, ValueError) as error:
+            print(f"判定設定を適用できません: {error}", file=sys.stderr)
+            return 2
     images = collect_images(args.inputs)
     if not images:
         print("解析対象の画像がありません。", file=sys.stderr)
         return 2
-    if not 0 <= args.threshold <= 1:
+    threshold = (
+        decision_config["threshold"] if decision_config is not None else args.threshold
+    )
+    if not 0 <= threshold <= 1:
         print("--threshold は0以上1以下にしてください。", file=sys.stderr)
         return 2
     if args.max_bytes <= 0:
@@ -240,7 +351,9 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 derived = create_derived_jpeg(
                     derived_source,
-                    directory=Path(derived_directory.name),
+                    directory=Path(derived_directory.name)
+                    if derived_directory is not None
+                    else None,
                     max_bytes=args.max_bytes,
                 )
             except Exception as error:  # noqa: BLE001
@@ -293,10 +406,10 @@ def main(argv: list[str] | None = None) -> int:
         try:
             for image, input_variant, display_path in logical_images:
                 try:
-                    record = analyze_image(
+                    record: dict[str, Any] = analyze_image(
                         image,
                         detector=detector,
-                        threshold=args.threshold,
+                        threshold=threshold,
                         check_c2pa=not args.skip_c2pa,
                         c2pa_trust_anchors=args.c2pa_trust_anchors,
                         max_bytes=args.max_bytes,
@@ -310,6 +423,12 @@ def main(argv: list[str] | None = None) -> int:
                         "error": f"{type(error).__name__}: {error}",
                     }
                 record["input_variant"] = input_variant
+                if args.decision_config is not None:
+                    record["decision"] = apply_decision(
+                        record,
+                        decision_config,
+                        usage=args.decision_usage,
+                    )
                 if input_variant == "derived_jpeg":
                     record["path"] = str(display_path.expanduser().resolve())
 
@@ -324,13 +443,21 @@ def main(argv: list[str] | None = None) -> int:
                             tile_result = analyze_full_area_tiles(
                                 image,
                                 detector,
-                                threshold=args.threshold,
+                                threshold=threshold,
                                 max_bytes=args.max_bytes,
                             )
                             record["universal_fake_detect_tiles"] = tile_result
+                            media_result = record.get("media")
+                            c2pa_result = record.get("c2pa")
+                            if not isinstance(media_result, dict) or not isinstance(
+                                c2pa_result, dict
+                            ):
+                                raise TypeError(
+                                    "解析結果の媒体または来歴情報がありません"
+                                )
                             state_a = build_jev_state(
-                                record["media"],
-                                record["c2pa"],
+                                media_result,
+                                c2pa_result,
                                 tile_result,
                                 input_variant=input_variant,
                             )

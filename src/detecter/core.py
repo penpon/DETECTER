@@ -28,6 +28,9 @@ UFD_ARCHIVE_URL = (
 UFD_ARCHIVE_SHA256 = "c53350bc906cf9b6b28b0e4842d4e52398d994002af0f18ba86e71d24c4957f8"
 UFD_HEAD_SHA256 = "477100745713bcc957beb2b40859536859b6483fd6301b3b9293151b194c7847"
 UFD_CLIP_MODEL = "ViT-L/14"
+UFD_CLIP_SHA256 = "b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836"
+UFD_WEIGHTS_VERSION = f"{UFD_HEAD_SHA256}:{UFD_CLIP_SHA256}"
+UFD_PREPROCESSING_VERSION = "ufd-rgb-center224-clip-normalize-v1"
 UFD_DEFAULT_THRESHOLD = 0.5
 MAX_INPUT_BYTES = 50 * 1024 * 1024
 MAX_IMAGE_PIXELS = 100_000_000
@@ -577,6 +580,10 @@ class UfdDetector:
 
     def metadata(self) -> dict[str, Any]:
         return {
+            "model": "ufd",
+            "model_version": UFD_COMMIT,
+            "weights_version": UFD_WEIGHTS_VERSION,
+            "preprocessing_version": UFD_PREPROCESSING_VERSION,
             "name": "UniversalFakeDetect",
             "source_commit": UFD_COMMIT,
             "clip_model": UFD_CLIP_MODEL,
