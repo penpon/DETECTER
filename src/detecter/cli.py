@@ -333,6 +333,7 @@ def _dispatch_command(raw: list[str]) -> int | None:
         "calibrate": ("detecter.calibration", "main"),
         "derive-jpeg": ("detecter.derive_jpeg", "main"),
         "synthid-manual": ("detecter.synthid_manual", "main"),
+        "evaluate-pipeline": ("detecter.pipeline", "main"),
     }
     target = commands.get(raw[0])
     if target is None:
