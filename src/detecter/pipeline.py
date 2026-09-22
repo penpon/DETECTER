@@ -118,22 +118,36 @@ def _ledger_shape(
     groups: set[str] = set()
     reasons: list[str] = []
     group_states: dict[str, tuple[Any, Any]] = {}
+    all_ids: set[str] = set()
+    all_hashes: set[str] = set()
     for row in rows:
         image_id, group = row.get("image_id"), row.get("source_group")
-        if not isinstance(image_id, str) or not image_id or image_id in ids:
+        image_hash = row.get("sha256")
+        if not isinstance(image_id, str) or not image_id or image_id in all_ids:
             reasons.append("ledger_duplicate_or_missing_image_id")
+        if isinstance(image_id, str) and image_id:
+            all_ids.add(image_id)
+        if (
+            not isinstance(image_hash, str)
+            or not image_hash
+            or image_hash in all_hashes
+        ):
+            reasons.append("ledger_duplicate_or_missing_sha256")
+        if isinstance(image_hash, str) and image_hash:
+            all_hashes.add(image_hash)
         if not isinstance(group, str) or not group:
             reasons.append("ledger_source_group_missing")
+        if isinstance(group, str) and group:
+            state = (row.get("label"), row.get("split"))
+            if group in group_states and group_states[group] != state:
+                reasons.append("source_group_crosses_label_or_split")
+            group_states[group] = state
         if row.get("split") != split:
             continue
         if isinstance(image_id, str):
             ids.add(image_id)
         if isinstance(group, str):
             groups.add(group)
-            state = (row.get("label"), row.get("split"))
-            if group in group_states and group_states[group] != state:
-                reasons.append("source_group_crosses_label_or_split")
-            group_states[group] = state
     return ids, groups, sorted(set(reasons))
 
 
