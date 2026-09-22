@@ -26,7 +26,13 @@ from detecter.core import (
 class CoreTests(unittest.TestCase):
     def test_verdict_prefers_trusted_ai_provenance(self):
         verdict = provisional_verdict(
-            {"status": "present", "trusted": True, "ai_source_assertion": True},
+            {
+                "status": "present",
+                "trusted": True,
+                "confirmed": True,
+                "generation_scope": "full",
+                "ai_source_assertion": True,
+            },
             {"status": "ok", "predicted_ai": False},
         )
         self.assertEqual(verdict["state"], "ai_evidence_confirmed")
