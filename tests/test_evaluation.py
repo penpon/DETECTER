@@ -1,6 +1,9 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from detecter.evaluation import evaluate_records
+from detecter.evaluation import evaluate_records, main
 
 CONDITION = {
     "model": "ufd",
@@ -89,8 +92,47 @@ class EvaluationTests(unittest.TestCase):
         report = evaluate_records([row], [measurement], [decision])
         self.assertEqual(report["metrics"]["generated_detection_rate"]["numerator"], 0)
         self.assertIn("condition_mismatch", report["targets"][0]["reasons"])
+        stale = evaluate_records([row], [{**measurement, "sha256": "b" * 64}], [])
+        self.assertEqual(
+            stale["metrics"]["generated_detection_rate"]["status"], "not_measured"
+        )
+        self.assertIsNone(stale["metrics"]["failure_rate"]["rate"])
         with self.assertRaisesRegex(ValueError, "duplicate"):
             evaluate_records([row], [measurement, measurement], [decision])
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            evaluate_records(
+                [row, {**row, "image_id": "b", "split": "tuning"}],
+                [],
+                [],
+                split="evaluation",
+            )
+
+    def test_cli_reads_saved_files_and_writes_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("ledger", "measurements", "decisions"):
+                (root / name).write_text("", encoding="utf-8")
+            output = root / "report.json"
+            self.assertEqual(
+                main(
+                    [
+                        "--ledger",
+                        str(root / "ledger"),
+                        "--measurements",
+                        str(root / "measurements"),
+                        "--decisions",
+                        str(root / "decisions"),
+                        "--output",
+                        str(output),
+                    ]
+                ),
+                0,
+            )
+            report = json.loads(output.read_text())
+            self.assertEqual(report["target_count"], 0)
+            self.assertEqual(
+                report["metrics"]["failure_rate"]["status"], "insufficient_data"
+            )
 
 
 if __name__ == "__main__":

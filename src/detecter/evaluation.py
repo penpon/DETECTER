@@ -145,6 +145,14 @@ def evaluate_records(
     if unit not in {"image", "source_group"}:
         raise ValueError("unit must be image or source_group")
     _index(ledger)
+    group_states: dict[str, tuple[Any, Any]] = {}
+    for row in ledger:
+        group = row.get("source_group")
+        if not isinstance(group, str) or not group:
+            raise ValueError("missing source_group")
+        state = (row.get("label"), row.get("split"))
+        if group_states.setdefault(group, state) != state:
+            raise ValueError(f"conflicting label or split in source_group: {group}")
     measured, decided = _index(measurements), _index(decisions)
     rows = [r for r in ledger if split is None or r.get("split") == split]
     ids = {r["image_id"] for r in rows}
@@ -168,8 +176,10 @@ def evaluate_records(
             decided.get(row["image_id"]),
         )
         reasons = []
-        attempted = measurement is not None
-        failed = bool(measurement and measurement.get("status") == "error")
+        attempted = bool(measurement and measurement.get("sha256") == row["sha256"])
+        failed = bool(
+            attempted and measurement and measurement.get("status") == "error"
+        )
         if measurement is None:
             reasons.append("measurement_missing")
         elif measurement.get("sha256") != row["sha256"]:
