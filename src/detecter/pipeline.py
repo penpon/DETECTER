@@ -16,6 +16,7 @@ from .ledger import read_ledger
 TARGET_FPR_UPPER = 0.001
 TARGET_GENERATED_RATE = 0.9
 CONFIDENCE = 0.95
+_BETA_EPSILON = 1e-300
 
 
 def one_sided_upper_bound(
@@ -33,13 +34,64 @@ def one_sided_upper_bound(
         return 1.0 - alpha ** (1.0 / total)
     if successes == total:
         return 1.0
-    # Wilson's one-sided normal bound is a stable stdlib fallback for x > 0.
-    z = 1.6448536269514722
-    p = successes / total
-    denominator = 1.0 + z * z / total
-    centre = p + z * z / (2.0 * total)
-    spread = z * math.sqrt(p * (1.0 - p) / total + z * z / (4.0 * total * total))
-    return min(1.0, (centre + spread) / denominator)
+    return _beta_inverse(confidence, successes + 1, total - successes)
+
+
+def _beta_continued_fraction(a: float, b: float, x: float) -> float:
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    d = max(abs(d), _BETA_EPSILON) * (1.0 if d >= 0 else -1.0)
+    d = 1.0 / d
+    result = d
+    for index in range(1, 201):
+        step = 2.0 * index
+        numerator = index * (b - index) * x / ((qam + step) * (a + step))
+        d = 1.0 + numerator * d
+        d = max(abs(d), _BETA_EPSILON) * (1.0 if d >= 0 else -1.0)
+        c = 1.0 + numerator / c
+        c = max(abs(c), _BETA_EPSILON) * (1.0 if c >= 0 else -1.0)
+        d = 1.0 / d
+        result *= d * c
+        numerator = -(a + index) * (a + b + index) * x / ((a + step) * (a + step + 1.0))
+        d = 1.0 + numerator * d
+        d = max(abs(d), _BETA_EPSILON) * (1.0 if d >= 0 else -1.0)
+        c = 1.0 + numerator / c
+        c = max(abs(c), _BETA_EPSILON) * (1.0 if c >= 0 else -1.0)
+        d = 1.0 / d
+        delta = d * c
+        result *= delta
+        if abs(delta - 1.0) < 3e-14:
+            break
+    return result
+
+
+def _beta_cdf(x: float, a: float, b: float) -> float:
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    factor = math.exp(
+        math.lgamma(a + b)
+        - math.lgamma(a)
+        - math.lgamma(b)
+        + a * math.log(x)
+        + b * math.log1p(-x)
+    )
+    if x < (a + 1.0) / (a + b + 2.0):
+        return factor * _beta_continued_fraction(a, b, x) / a
+    return 1.0 - factor * _beta_continued_fraction(b, a, 1.0 - x) / b
+
+
+def _beta_inverse(probability: float, a: int, b: int) -> float:
+    low, high = 0.0, 1.0
+    for _ in range(100):
+        middle = (low + high) / 2.0
+        if _beta_cdf(middle, float(a), float(b)) < probability:
+            low = middle
+        else:
+            high = middle
+    return (low + high) / 2.0
 
 
 def _metric_upper(metric: dict[str, Any]) -> dict[str, Any]:
@@ -53,7 +105,7 @@ def _metric_upper(metric: dict[str, Any]) -> dict[str, Any]:
         "total": denominator,
         "upper": upper,
         "confidence": CONFIDENCE,
-        "method": "clopper_pearson_zero_failure_or_wilson_one_sided",
+        "method": "clopper_pearson_one_sided",
         "passes": upper is not None and upper <= TARGET_FPR_UPPER,
         "status": metric.get("status"),
     }
@@ -105,6 +157,40 @@ def _comparison_stage(
     }
 
 
+def _preprocessing_stage(
+    records: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    if records is None:
+        return {
+            "status": "insufficient",
+            "reason": "preprocessing_conditions_not_provided",
+        }
+    expected = {
+        ("jpeg", 95),
+        ("jpeg", 85),
+        ("jpeg", 75),
+        ("resize", 1024),
+        ("resize", 512),
+    }
+    seen: set[tuple[Any, Any]] = set()
+    for row in records:
+        condition = row.get("condition") if isinstance(row, dict) else None
+        if isinstance(condition, dict):
+            seen.add(
+                (
+                    condition.get("operation"),
+                    condition.get("jpeg_quality") or condition.get("long_side"),
+                )
+            )
+    missing = sorted(expected - seen, key=str)
+    return {
+        "status": "ok" if not missing else "insufficient",
+        "condition_count": len(records),
+        "missing_conditions": [list(item) for item in missing],
+        "reason": None if not missing else "preprocessing_condition_missing",
+    }
+
+
 def _base_report() -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -129,6 +215,12 @@ def run_pipeline(
     unit: str = "source_group",
 ) -> dict[str, Any]:
     report = _base_report()
+    if split != "evaluation":
+        report["unverified"] = ["final_evaluation_requires_evaluation_split"]
+        return report
+    if unit != "source_group":
+        report["unverified"] = ["pipeline_requires_source_group_unit"]
+        return report
     try:
         validate_config(decision_config, usage="evaluation")
     except ValueError as error:
@@ -155,7 +247,16 @@ def run_pipeline(
     calibration_groups = {
         row.get("source_group") for row in calibration if isinstance(row, dict)
     }
-    leakage = sorted((ids & calibration_ids) | (groups & calibration_groups))
+    calibration_hashes = {
+        row.get("sha256") for row in calibration if isinstance(row, dict)
+    }
+    final_hashes = {row.get("sha256") for row in ledger if row.get("split") == split}
+    leakage = sorted(
+        (ids & calibration_ids)
+        | (groups & calibration_groups)
+        | (final_hashes & calibration_hashes),
+        key=str,
+    )
     report["stages"]["ledger"] = {
         "status": "ok" if not shape_reasons else "invalid",
         "image_count": len(ids),
@@ -163,20 +264,13 @@ def run_pipeline(
         "split": split,
         "reasons": shape_reasons,
     }
-    report["stages"]["preprocessing"] = (
-        {"status": "ok", "condition_count": len(derived_conditions)}
-        if derived_conditions is not None
-        else {
-            "status": "insufficient",
-            "reason": "preprocessing_conditions_not_provided",
-        }
-    )
+    report["stages"]["preprocessing"] = _preprocessing_stage(derived_conditions)
     report["stages"]["comparison"] = _comparison_stage(comparisons, ids)
     if leakage:
         report["unverified"].append("final_evaluation_overlaps_calibration")
     if shape_reasons:
         report["unverified"].extend(shape_reasons)
-    if derived_conditions is None:
+    if report["stages"]["preprocessing"]["status"] != "ok":
         report["unverified"].append("preprocessing_conditions_not_provided")
     if report["stages"]["comparison"]["status"] != "ok":
         report["unverified"].append("model_comparison_incomplete")
@@ -228,7 +322,38 @@ def run_pipeline(
     else:
         decisions = []
         decision_status = "insufficient"
-    report["stages"]["decision"] = {"status": decision_status, "count": len(decisions)}
+    expected_condition = tuple(
+        decision_config.get(key)
+        for key in (
+            "model",
+            "model_version",
+            "weights_version",
+            "preprocessing_version",
+        )
+    )
+    decision_reasons: list[str] = []
+    for decision in decisions:
+        if decision.get("config_id") != decision_config.get("config_id"):
+            decision_reasons.append("decision_config_id_mismatch")
+        actual_condition = tuple(
+            decision.get(key)
+            for key in (
+                "model",
+                "model_version",
+                "weights_version",
+                "preprocessing_version",
+            )
+        )
+        if actual_condition != expected_condition:
+            decision_reasons.append("decision_condition_mismatch")
+    if decision_reasons:
+        decision_status = "invalid"
+        report["unverified"].extend(decision_reasons)
+    report["stages"]["decision"] = {
+        "status": decision_status,
+        "count": len(decisions),
+        "reasons": sorted(set(decision_reasons)),
+    }
 
     try:
         evaluation = evaluate_records(
@@ -247,7 +372,17 @@ def run_pipeline(
         else {"status": "insufficient", "reason": "evaluation_records_invalid"}
     )
 
-    if evaluation is None or not ids or leakage or shape_reasons:
+    processing_complete = (
+        report["stages"]["preprocessing"]["status"] == "ok"
+        and report["stages"]["comparison"]["status"] == "ok"
+    )
+    if (
+        evaluation is None
+        or not ids
+        or leakage
+        or shape_reasons
+        or not processing_complete
+    ):
         report["status"] = "insufficient_evidence"
     else:
         fpr = evaluation["metrics"]["false_positive_rate"]
@@ -256,9 +391,7 @@ def run_pipeline(
         generated_rate = (
             generated.get("rate") if generated.get("status") == "measured" else None
         )
-        real_rows = sum(
-            row.get("label") == "real" for row in ledger if row.get("split") == split
-        )
+        real_rows = fpr.get("target_count", 0)
         if real_rows < 3000:
             report["unverified"].append("fewer_than_3000_independent_real_images")
         if not any(row.get("generator") for row in ledger if row.get("split") == split):
@@ -287,15 +420,33 @@ def run_pipeline(
             "upper_bound": one_sided_upper_bound(0, 3000),
             "target": TARGET_FPR_UPPER,
         }
+        synthetic = all(
+            str(row.get("source", "")).lower().startswith("synthetic")
+            for row in ledger
+            if row.get("split") == split
+        )
+        if synthetic and ids:
+            report["unverified"].append("synthetic_data_not_performance_evidence")
+        if fpr.get("excluded_count", 0):
+            report["unverified"].append("real_measurement_missing_or_unresolved")
         if (
             fpr_upper["passes"]
             and report["criteria"]["generated_detection_rate"]["passes"]
+            and real_rows >= 3000
+            and not fpr.get("excluded_count", 0)
+            and report["stages"]["decision"]["status"] != "invalid"
+            and not synthetic
+            and processing_complete
         ):
             report["status"] = "achieved"
         elif (
             fpr_upper["upper"] is None
             or generated_rate is None
             or fpr.get("excluded_count", 0)
+            or real_rows < 3000
+            or synthetic
+            or report["stages"]["decision"]["status"] == "invalid"
+            or not processing_complete
         ):
             report["status"] = "insufficient_evidence"
         else:
@@ -306,7 +457,7 @@ def run_pipeline(
             report["status"], "evidence_insufficient"
         ),
         "decision_applied": report["stages"].get("decision", {}).get("status")
-        not in {"insufficient"},
+        in {"loaded", "generated_from_measurements"},
         "performance_status": report["status"],
     }
     return report
@@ -334,6 +485,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--decisions", type=Path)
     parser.add_argument("--comparison", type=Path)
     parser.add_argument("--derived-conditions", type=Path)
+    parser.add_argument(
+        "--derive-directory",
+        type=Path,
+        help="加工を実行して派生画像を保存するディレクトリ",
+    )
+    parser.add_argument(
+        "--run-ufd", action="store_true", help="台帳画像をUFDで計測する"
+    )
+    parser.add_argument(
+        "--run-comparison",
+        action="store_true",
+        help="Community ForensicsとUFDを計測する",
+    )
+    parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument("--device", choices=("cpu", "auto", "cuda"), default="cpu")
     parser.add_argument("--synthid", type=Path)
     parser.add_argument("--split", default="evaluation")
     parser.add_argument(
@@ -351,6 +517,25 @@ def main(argv: list[str] | None = None) -> int:
             read_jsonl(args.derived_conditions) if args.derived_conditions else None
         )
         synthid = read_jsonl(args.synthid) if args.synthid else None
+        if args.derive_directory is not None:
+            from .derive_jpeg import derive_images
+
+            _, derived = derive_images(args.ledger, args.derive_directory)
+        if args.run_ufd:
+            from .ufd_batch import load_inputs, measure_batch
+
+            measurements = measure_batch(
+                load_inputs(args.ledger), cache_dir=args.cache_dir, device=args.device
+            )
+        if args.run_comparison:
+            from .comparison import compare_records
+            from .ufd_batch import load_inputs
+
+            comparisons = compare_records(
+                load_inputs(args.ledger), cache_dir=args.cache_dir, device=args.device
+            )
+            if measurements is None:
+                measurements = [row for row in comparisons if row.get("model") == "ufd"]
         report = run_pipeline(
             ledger,
             config,
