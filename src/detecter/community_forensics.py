@@ -86,10 +86,11 @@ def load_model(cache_dir: Path | None = None) -> Any:
     return model.eval()
 
 
-def infer(path: Path, *, cache_dir: Path | None = None) -> float:
+def infer(path: Path, *, cache_dir: Path | None = None, model: Any = None) -> float:
     import torch
 
-    model = load_model(cache_dir)
+    if model is None:
+        model = load_model(cache_dir)
     with Image.open(path) as image:
         tensor = preprocess(image).unsqueeze(0)
     with torch.inference_mode():
@@ -102,6 +103,9 @@ def measure(
     image_id: str | None = None,
     device: str = "cpu",
     cache_dir: Path | None = None,
+    expected_sha256: str | None = None,
+    model: Any = None,
+    model_error: Exception | None = None,
 ) -> dict[str, Any]:
     path = Path(path).expanduser()
     libraries = {}
@@ -113,7 +117,7 @@ def measure(
     record: dict[str, Any] = {
         "schema_version": 1,
         "image_id": image_id or str(path),
-        "sha256": None,
+        "sha256": expected_sha256,
         "model": MODEL,
         "model_version": SOURCE_COMMIT,
         "weights_version": f"{WEIGHTS_REVISION}:sha256:{WEIGHTS_SHA256}",
@@ -130,11 +134,17 @@ def measure(
         "error": None,
     }
     try:
-        record["sha256"] = file_sha256(path)
+        actual_hash = file_sha256(path)
+        record["observed_sha256"] = actual_hash
+        if expected_sha256 is not None and actual_hash != expected_sha256:
+            raise ValueError("image hash mismatch")
+        record["sha256"] = actual_hash
         inspect_image(path)
         if device != "cpu":
             raise ValueError("Community Forensicsの実行機器はcpuを指定してください")
-        score = infer(path, cache_dir=cache_dir)
+        if model_error is not None:
+            raise model_error
+        score = infer(path, cache_dir=cache_dir, model=model)
         if not math.isfinite(score):
             raise ValueError("モデルが有限数値ではないスコアを返しました")
         record.update(status="ok", raw_score=score)
