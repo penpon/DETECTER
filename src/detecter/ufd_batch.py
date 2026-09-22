@@ -147,6 +147,7 @@ def load_inputs(path: Path) -> list[dict[str, Any]]:
                     if image_path.is_absolute()
                     else path.parent / image_path,
                     "source_sha256": row.get("source_sha256", row["sha256"]),
+                    "source_image_id": row.get("source_image_id", row["image_id"]),
                     "history": row.get("history", []),
                 }
             )
