@@ -435,6 +435,7 @@ class C2paProvenanceTests(unittest.TestCase):
             {"modelType": model_type, "scientificDomain": ["bad domain"]},
             {"modelType": model_type, "modelName": 123},
             {"modelType": model_type, "metadata": []},
+            {"modelType": model_type, "unexpected": True},
         )
         for data in invalid_data:
             with self.subTest(data=data), tempfile.TemporaryDirectory() as directory:

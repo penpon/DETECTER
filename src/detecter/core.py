@@ -262,6 +262,15 @@ def _ai_disclosure_records(assertions: Any) -> list[dict[str, Any]]:
         data = assertion.get("data")
         if not isinstance(data, dict):
             continue
+        if set(data) - {
+            "modelType",
+            "modelName",
+            "modelIdentifier",
+            "contentProfile",
+            "scientificDomain",
+            "metadata",
+        }:
+            continue
         model_type = data.get("modelType")
         if not isinstance(model_type, str) or model_type not in C2PA_MODEL_TYPES:
             continue
