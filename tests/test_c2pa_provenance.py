@@ -403,6 +403,25 @@ class C2paProvenanceTests(unittest.TestCase):
         self.assertEqual(result["binding_state"], "match")
         self.assertEqual(result["generation_scope"], "full")
 
+    def test_disclosure_without_model_type_is_not_an_ai_claim(self):
+        module = reader_module(
+            success=(
+                "claimSignature.validated",
+                "signingCredential.trusted",
+                "assertion.dataHash.match",
+            ),
+            source="digitalCreation",
+            action="c2pa.created",
+        )
+        active = module.Reader.try_create().get_active_manifest()
+        active["assertions"].append({"label": "c2pa.ai-disclosure", "data": {}})
+        with patch.dict("sys.modules", {"c2pa": module}):
+            result = inspect_c2pa(Path("synthetic.png"))
+        self.assertFalse(result["ai_disclosure_assertion"])
+        self.assertEqual(result["ai_disclosure"], [])
+        verdict = provisional_verdict(result, {"status": "ok", "predicted_ai": False})
+        self.assertEqual(verdict["state"], "no_ai_signal_detected")
+
     def test_ingredient_disclosure_is_not_the_current_asset_claim(self):
         module = reader_module(
             success=("claimSignature.validated", "assertion.dataHash.match")

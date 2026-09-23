@@ -229,6 +229,9 @@ def _ai_disclosure_records(assertions: Any) -> list[dict[str, Any]]:
         data = assertion.get("data")
         if not isinstance(data, dict):
             continue
+        model_type = data.get("modelType")
+        if not isinstance(model_type, str) or not model_type.strip():
+            continue
         profile = data.get("contentProfile")
         oversight = None
         if isinstance(profile, dict) and isinstance(
@@ -242,9 +245,7 @@ def _ai_disclosure_records(assertions: Any) -> list[dict[str, Any]]:
             isinstance(item, str) for item in domains
         ):
             domains = []
-        record: dict[str, Any] = {}
-        if isinstance(data.get("modelType"), str):
-            record["model_type"] = data["modelType"]
+        record: dict[str, Any] = {"model_type": model_type}
         if isinstance(data.get("modelName"), str):
             record["model_name"] = data["modelName"]
         if isinstance(data.get("modelIdentifier"), str):
