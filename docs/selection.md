@@ -22,7 +22,17 @@ uv run detecter select-candidate finalize \
   --output results/final-selection-report.json
 ```
 
-調整用の計測は `detecter compare` で同じ台帳から作ります。
+調整用の計測は `detecter compare` で同じ台帳から作ります。1ファイルに複数モデルの
+記録が入るため、`--candidate`へ渡す前にモデルごとへ分けます。
+
+```sh
+uv run detecter compare community-forensics ufd cure \
+  --ledger ledger/tuning-ledger.jsonl --output results/tuning-comparison.jsonl
+jq -c 'select(.model=="ufd")' results/tuning-comparison.jsonl > results/tuning-ufd.jsonl
+jq -c 'select(.model=="community-forensics-384")' \
+  results/tuning-comparison.jsonl > results/tuning-community-forensics.jsonl
+jq -c 'select(.model=="cure")' results/tuning-comparison.jsonl > results/tuning-cure.jsonl
+```
 各記録のモデル・重み・前処理の識別情報は計測時に保存され、
 選択処理は候補ごとに照合します。異なるモデルのスコアを平均したり
 多数決したりしません。
