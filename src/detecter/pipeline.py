@@ -179,10 +179,9 @@ def _generator_coverage(
     split: str,
     required: dict[str, int],
 ) -> dict[str, Any]:
-    actual: dict[str, int] = {}
     groups: dict[str, set[str]] = {}
     for row in ledger:
-        if row.get("split") != split:
+        if row.get("split") != split or row.get("label") != "generated":
             continue
         name = row.get("generator")
         key = str(name) if isinstance(name, str) and name else "unknown"
@@ -204,14 +203,7 @@ def _generator_coverage(
         for name, minimum in sorted(required.items())
     }
     met = all(item["met"] for item in details.values())
-    if not required:
-        status: str = "not_required"
-    elif not details:
-        status = "insufficient_data"
-    elif met:
-        status = "met"
-    else:
-        status = "insufficient_data"
+    status = "not_required" if not required else "met" if met else "insufficient_data"
     return {
         "required": dict(sorted(required.items())),
         "actual": actual,
@@ -389,8 +381,15 @@ def run_pipeline(
     if split != "evaluation":
         report["unverified"] = ["final_evaluation_requires_evaluation_split"]
         return report
+    coverage = _generator_coverage(ledger, split=split, required=required)
+    report["generator_coverage"] = coverage
+    if not coverage["met"]:
+        for name in sorted(
+            key for key, item in coverage["details"].items() if not item["met"]
+        ):
+            report["unverified"].append(f"generator_group_insufficient:{name}")
     if unit != "source_group":
-        report["unverified"] = ["pipeline_requires_source_group_unit"]
+        report["unverified"].append("pipeline_requires_source_group_unit")
         return report
     try:
         validate_config(decision_config, usage="evaluation")
@@ -407,7 +406,7 @@ def run_pipeline(
             "decision_applied": False,
             "reason": f"decision_config_invalid: {error}",
         }
-        report["unverified"] = ["decision_config_invalid"]
+        report["unverified"].append("decision_config_invalid")
         return report
 
     ids, groups, shape_reasons = _ledger_shape(ledger, split)
@@ -571,20 +570,21 @@ def run_pipeline(
             generated.get("rate") if generated.get("status") == "measured" else None
         )
         real_rows = fpr.get("target_count", 0)
-        coverage = _generator_coverage(ledger, split=split, required=required)
-        report["generator_coverage"] = coverage
-        if not coverage["met"]:
-            for name in sorted(
-                key for key, item in coverage["details"].items() if not item["met"]
-            ):
-                report["unverified"].append(f"generator_group_insufficient:{name}")
         if gen_lower["lower"] is None and generated.get("status") != "measured":
             report["unverified"].append("generated_detection_not_measured")
         if real_rows < 3000:
             report["unverified"].append("fewer_than_3000_independent_real_images")
-        if not any(row.get("generator") for row in ledger if row.get("split") == split):
+        if not any(
+            row.get("generator")
+            for row in ledger
+            if row.get("split") == split and row.get("label") == "generated"
+        ):
             report["unverified"].append("generator_breakdown_not_provided")
-        if not any(row.get("camera") for row in ledger if row.get("split") == split):
+        if not any(
+            row.get("camera")
+            for row in ledger
+            if row.get("split") == split and row.get("label") == "real"
+        ):
             report["unverified"].append("camera_breakdown_not_provided")
         if not any(
             row.get("label") == "edited" for row in ledger if row.get("split") == split

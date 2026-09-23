@@ -215,6 +215,27 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(met["status"], "achieved")
         self.assertTrue(met["generator_coverage"]["met"])
 
+    def test_generator_coverage_excludes_edits_and_survives_missing_measurements(self):
+        ledger = rows(real=1, generated=1)
+        ledger[1]["generator"] = "gen-a"
+        edited = {
+            **ledger[1],
+            "image_id": "edited-1",
+            "sha256": "c" * 64,
+            "source_group": "edited-1",
+            "label": "edited",
+        }
+        ledger.append(edited)
+        report = run_pipeline(
+            ledger,
+            config(),
+            required_generators={"gen-a": 2},
+        )
+        self.assertEqual(report["status"], "insufficient_evidence")
+        self.assertEqual(report["generator_coverage"]["actual"]["gen-a"], 1)
+        self.assertFalse(report["generator_coverage"]["met"])
+        self.assertIn("generator_group_insufficient:gen-a", report["unverified"])
+
     def test_lower_bound_helpers(self):
         self.assertIsNone(one_sided_lower_bound(0, 0))
         self.assertEqual(one_sided_lower_bound(0, 5), 0.0)
