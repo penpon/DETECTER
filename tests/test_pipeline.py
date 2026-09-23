@@ -252,6 +252,28 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(report["status"], "insufficient_evidence")
         self.assertIn("measurements_missing", report["unverified"])
 
+    def test_invalid_evaluation_keeps_confidence_fields_as_insufficient(self):
+        ledger = rows(real=2, generated=1)
+        ledger[0]["label"] = "invalid"
+        measurements, decisions = records(ledger)
+        comparisons, conditions = processing(ledger)
+        report = run_pipeline(
+            ledger,
+            config(),
+            measurements=measurements,
+            decisions=decisions,
+            comparisons=comparisons,
+            derived_conditions=conditions,
+        )
+        generated = report["criteria"]["generated_detection_rate"]
+        self.assertEqual(report["status"], "insufficient_evidence")
+        self.assertEqual(generated["status"], "insufficient_data")
+        self.assertIsNone(generated["numerator"])
+        self.assertIsNone(generated["denominator"])
+        self.assertIsNone(generated["lower"])
+        self.assertEqual(generated["confidence"], 0.95)
+        self.assertEqual(generated["method"], "clopper_pearson_one_sided")
+
     def test_bad_final_evaluation_is_not_met(self):
         ledger = rows(real=3000, generated=10)
         measurements, decisions = records(ledger)
