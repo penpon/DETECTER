@@ -12,7 +12,13 @@ from typing import Any
 
 from PIL import Image
 
-from .core import _download, default_cache_dir, file_sha256, inspect_image
+from .core import (
+    _download,
+    default_cache_dir,
+    ensure_heif_opener,
+    file_sha256,
+    inspect_image,
+)
 
 MODEL = "community-forensics-384"
 SOURCE_COMMIT = "ee5b71d43db0f3779e1edd64ee927b13f2dd6ad4"
@@ -91,6 +97,7 @@ def infer(path: Path, *, cache_dir: Path | None = None, model: Any = None) -> fl
 
     if model is None:
         model = load_model(cache_dir)
+    ensure_heif_opener()
     with Image.open(path) as image:
         tensor = preprocess(image).unsqueeze(0)
     with torch.inference_mode():
