@@ -302,7 +302,10 @@ def _ai_disclosure_records(assertions: Any) -> list[dict[str, Any]]:
             )
         ):
             continue
-        if "metadata" in data and not isinstance(data["metadata"], dict):
+        if "metadata" in data and (
+            not isinstance(data["metadata"], dict)
+            or any(not isinstance(key, str) for key in data["metadata"])
+        ):
             continue
         record: dict[str, Any] = {"model_type": model_type}
         if isinstance(data.get("modelName"), str):
