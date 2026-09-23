@@ -315,6 +315,11 @@ def parser() -> argparse.ArgumentParser:
     analyze.add_argument("--skip-ufd", action="store_true")
     analyze.add_argument("--max-bytes", type=int, default=MAX_INPUT_BYTES)
     analyze.add_argument(
+        "--synthid-manual",
+        type=Path,
+        help="手動SynthID結果のJSON Lines。画像IDとSHA-256の両方で照合します。",
+    )
+    analyze.add_argument(
         "--jev-compare",
         action="store_true",
         help="Jev 1.13で画素グリッド追加前後の比較を記録します",
@@ -386,6 +391,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.jev_compare and args.skip_ufd:
         print("--jev-compare と --skip-ufd は併用できません。", file=sys.stderr)
         return 2
+
+    synthid_records: list[dict[str, Any]] | None = None
+    if args.synthid_manual is not None:
+        try:
+            from .synthid_manual import read_manual_records
+
+            synthid_records = read_manual_records(args.synthid_manual)
+        except (OSError, ValueError) as error:
+            print(f"SynthID手動結果を読み込めません: {error}", file=sys.stderr)
+            return 2
 
     derived_directory = (
         tempfile.TemporaryDirectory(prefix="detecter-jev-")
@@ -476,6 +491,7 @@ def main(argv: list[str] | None = None) -> int:
                         check_c2pa=not args.skip_c2pa,
                         c2pa_trust_anchors=args.c2pa_trust_anchors,
                         max_bytes=args.max_bytes,
+                        synthid_records=synthid_records,
                     )
                 # A bad image must not prevent the remaining input files from being recorded.
                 except Exception as error:  # noqa: BLE001

@@ -14,7 +14,7 @@ import tempfile
 import time
 import urllib.request
 import warnings
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -837,7 +837,7 @@ def build_jev_state(
             "Jev receives text-only state; no image bytes or base64 are sent.",
             "UniversalFakeDetect scores are uncalibrated detector scores, not probabilities of correctness.",
             "All tile scores use the same UniversalFakeDetect detector.",
-            "SynthID was not checked.",
+            "Manual SynthID results are kept outside this model input.",
             "No detected signal is not proof that the image is a real photograph.",
         ],
     }
@@ -913,6 +913,8 @@ def analyze_image(
     check_c2pa: bool = True,
     c2pa_trust_anchors: Path | None = None,
     max_bytes: int = MAX_INPUT_BYTES,
+    synthid_records: Sequence[Mapping[str, Any]] | None = None,
+    image_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     resolved = path.expanduser().resolve()
@@ -940,6 +942,13 @@ def analyze_image(
                 **detector.metadata(),
                 "error": f"{type(error).__name__}: {error}",
             }
+    from .synthid_manual import summarize_synthid
+
+    synthid = summarize_synthid(
+        image_id=image_id if image_id is not None else str(resolved),
+        sha256=media["sha256"],
+        records=synthid_records,
+    )
     return {
         "schema_version": 1,
         "analyzed_at": datetime.now(UTC).isoformat(),
@@ -947,6 +956,7 @@ def analyze_image(
         "media": media,
         "c2pa": c2pa_result,
         "universal_fake_detect": ufd_result,
+        "synthid": synthid,
         "verdict": provisional_verdict(c2pa_result, ufd_result),
         "duration_ms": round((time.perf_counter() - started) * 1000, 3),
     }
