@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,19 @@ from detecter.core import inspect_image
 
 STATES = ("detected", "not_detected", "not_checked", "unverifiable")
 SCOPES = ("unknown", "full", "partial")
+
+INTERPRETATIONS = {
+    "detected": (
+        "SynthID検出はGoogleのAIによる生成または編集の証拠です。"
+        "画像全体の生成確定ではありません。"
+    ),
+    "not_detected": (
+        "SynthID未検出は実写の証明ではなく、"
+        "他社AIによる生成・編集の否定にもなりません。"
+    ),
+    "not_checked": "SynthIDは未検査です。",
+    "unverifiable": "SynthIDの確認を試みましたが、結果を確認できませんでした。",
+}
 
 
 def create_manual_record(
@@ -71,6 +85,87 @@ def create_manual_record(
         "evidence": evidence,
         "registrant": registrant,
         "registered_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def read_manual_records(path: Path) -> list[dict[str, Any]]:
+    """Read saved manual results without revalidating the image files."""
+    records: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise ValueError(f"{path}:{line_number}: expected object")  # noqa: TRY004
+            records.append(row)
+    return records
+
+
+def find_manual_record(
+    records: Sequence[Mapping[str, Any]] | None,
+    *,
+    image_id: str,
+    sha256: str,
+) -> dict[str, Any] | None:
+    """Return the latest record bound to both the image ID and the SHA-256."""
+    matched: dict[str, Any] | None = None
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        if record.get("image_id") == image_id and record.get("sha256") == sha256:
+            matched = record
+    return matched
+
+
+def summarize_synthid(
+    *,
+    image_id: str,
+    sha256: str,
+    records: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build the report section for a manual SynthID result.
+
+    Only a record matching both the image ID and the SHA-256 is linked.
+    The summary never claims automatic verification and never touches
+    the C2PA signature, trust, or binding states.
+    """
+    matched = find_manual_record(records, image_id=image_id, sha256=sha256)
+    if matched is None:
+        reason = "synthid_manual_not_registered"
+        if isinstance(records, Sequence):
+            for record in records:
+                if isinstance(record, dict) and record.get("image_id") == image_id:
+                    reason = "synthid_hash_mismatch"
+                    break
+        return {
+            "status": "not_linked",
+            "state": "not_checked",
+            "manual": False,
+            "automatically_verified": False,
+            "reason": reason,
+        }
+    state = matched.get("state")
+    if state not in STATES:
+        state = "unverifiable"
+    scope = matched.get("generation_scope")
+    if scope not in SCOPES or (state != "detected" and scope != "unknown"):
+        scope = "unknown"
+    return {
+        "status": "linked",
+        "state": state,
+        "manual": True,
+        "automatically_verified": False,
+        "signature_state": "not_checked",
+        "binding_state": "match",
+        "generation_scope": scope,
+        "image_id": image_id,
+        "sha256": sha256,
+        "checked_at": matched.get("checked_at"),
+        "route": matched.get("route"),
+        "evidence": matched.get("evidence"),
+        "registrant": matched.get("registrant"),
+        "interpretation": INTERPRETATIONS[state],
     }
 
 

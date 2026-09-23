@@ -56,6 +56,25 @@ uv run python -m detecter.synthid_manual add \
 手動記録は計測結果とは別ファイルに保存します。この記録がなくても既存の解析や評価は動作します。
 結果を参照するときは画像IDとSHA-256の両方を照合してください。
 
+## 解析レポートへの結び付け
+
+画像解析では、手動結果を他の根拠と区別して確認できます。
+画像IDとSHA-256の両方が一致した記録だけを結び付け、ハッシュ不一致の結果は結び付けません。
+`synthid` に確認状態（`detected` / `not_detected` / `not_checked` / `unverifiable`）と
+確認日時・確認経路・根拠をそのまま表示し、手動記録であることを明示します。
+この結び付けはC2PAの署名・信頼・画像との結び付きの状態を変更せず、暫定判定も変えません。
+検出はGoogleのAIによる生成または編集の証拠として扱い、画像全体の生成確定へ拡張しません。
+未検出から実写や他社AIの否定は導きません。
+
+```sh
+uv run detecter analyze image.jpg --skip-ufd \
+  --synthid-manual results/synthid-manual.jsonl --output -
+```
+
+手動記録の画像IDは、登録時の `--image-id` と解析時の画像ID（既定は解決済みパス）が
+一致する必要があります。記録がない画像や未確認の画像も既存の解析を続行でき、
+その場合は `synthid.status: not_linked` として理由を残します。
+
 ```sh
 uv run python -m unittest discover -s tests -p test_synthid_manual.py
 ```

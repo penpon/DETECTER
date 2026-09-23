@@ -186,6 +186,25 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(detector.batches, [16, 16, 16, 16])
             self.assertEqual(result["above_threshold_count"], 0)
 
+    def test_full_area_tiles_use_exif_transposed_dimensions(self):
+        class Detector:
+            def score_images(self, images):
+                return [0.25] * len(images)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            image = Path(temporary) / "rotated.jpg"
+            exif = Image.Exif()
+            exif[274] = 6
+            Image.new("RGB", (16, 8), "white").save(image, exif=exif)
+            result = analyze_full_area_tiles(
+                image, Detector(), tile_size=8, max_tiles_per_axis=4
+            )
+            self.assertEqual((result["rows"], result["columns"]), (2, 1))
+            self.assertEqual(
+                [tile["bounds"] for tile in result["tiles"]],
+                [[0, 0, 8, 8], [0, 8, 8, 16]],
+            )
+
     def test_derived_jpeg_is_resized_and_temporary(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "source.png"

@@ -25,7 +25,7 @@ from .core import (
 CLIP_SHA256 = "b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836"
 WEIGHTS_VERSION = f"{UFD_HEAD_SHA256}:{CLIP_SHA256}"
 PREPROCESSING_VERSION = UFD_PREPROCESSING_VERSION
-TILE_PREPROCESSING_VERSION = "ufd-rgb-grid8-lanczos224-mean-v1"
+TILE_PREPROCESSING_VERSION = "ufd-rgb-exif-grid8-lanczos224-mean-v2"
 
 
 def model_condition(mode: str = "single") -> dict[str, str]:
@@ -63,7 +63,7 @@ def measure(
         "preprocessing": {
             "mode": mode,
             "rgb": True,
-            "exif_transpose": False,
+            "exif_transpose": True,
             "crop": "center224" if mode == "single" else None,
         },
         "environment": {
@@ -73,6 +73,7 @@ def measure(
             "torch": importlib.metadata.version("torch"),
             "torchvision": importlib.metadata.version("torchvision"),
             "pillow": importlib.metadata.version("Pillow"),
+            "pillow_heif": importlib.metadata.version("pillow-heif"),
         },
     }
     try:
