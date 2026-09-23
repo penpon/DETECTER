@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,7 @@ name = "detecter"
 version = "0.1.0"
 description = "Minimal C2PA and UniversalFakeDetect image inspection spike"
 requires-python = ">=3.11,<3.12"
+license-files = ["LICENSES/*.txt"]
 dependencies = [
   "c2pa-python==0.37.10",
   "cryptography>=41,<47",
@@ -29,6 +30,11 @@ dev = [
 
 [project.optional-dependencies]
 community-forensics = ["timm==1.0.15", "safetensors==0.5.3"]
+cure = [
+  "albumentations==2.0.8",
+  "huggingface_hub>=0.23",
+  "opencv-python-headless>=4.9,<6",
+]
 
 [project.scripts]
 detecter = "detecter.cli:main"

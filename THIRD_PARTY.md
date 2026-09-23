@@ -7,6 +7,25 @@
 
 UniversalFakeDetect is downloaded from its pinned official commit on first use. The source archive and published classifier head are checked against SHA-256 values before execution.
 
+## CuRe
+
+- [Official code](https://github.com/manic-cui/CuRe/tree/8f7832c83dcd3f4f89de955103e94a64ddc3cdc9), commit `8f7832c83dcd3f4f89de955103e94a64ddc3cdc9` — Apache-2.0.
+- [Official adapter](https://github.com/manic-cui/CuRe/blob/8f7832c83dcd3f4f89de955103e94a64ddc3cdc9/weights/cure_adapter.pt), same commit — Apache-2.0, SHA-256 `17cabb334563c15abc8827db87dc272a4aef10f4279025faee1ef8d32c444ae1`.
+- [Base model](https://huggingface.co/facebook/PE-Core-L14-336), file `PE-Core-L14-336.pt` (about 2.7 GB), revision `bafb0f76541d399057e980a25947f67acec76575`, SHA-256 `0cdab5b338cbaa1e7a5dcd1b2fb4c9f4d5df1abd289564658edbab64a650e7e8` — Apache-2.0.
+- [albumentations](https://github.com/albumentations-team/albumentations/tree/2.0.8), version 2.0.8 — MIT.
+- [opencv-python-headless](https://github.com/opencv/opencv-python), version 4.x — Apache-2.0.
+- [huggingface_hub](https://github.com/huggingface/huggingface_hub), version 0.23 or newer — Apache-2.0.
+
+The vision backbone in `src/detecter/cure.py` adapts the pinned official
+`cure/backbone.py`, itself adapted from Perception Encoder by Meta Platforms,
+Inc. and affiliates under the Apache License 2.0. Preprocessing adapts the
+pinned official `cure/preprocess.py`; PNG inputs are identified by decoded
+format instead of filename suffix.
+The Apache-2.0 license text and the upstream PE Core notice are included in
+`LICENSES/Apache-2.0.txt` and `LICENSES/PE-Core-NOTICE.txt`.
+CuRe ships as the optional `cure` extra so the existing UFD and Community
+Forensics execution paths keep their pinned dependencies.
+
 ## Community Forensics 384
 
 - [Official code](https://github.com/JeongsooP/Community-Forensics/tree/ee5b71d43db0f3779e1edd64ee927b13f2dd6ad4), commit `ee5b71d43db0f3779e1edd64ee927b13f2dd6ad4` — MIT.
