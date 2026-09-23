@@ -90,6 +90,26 @@ class CureTests(unittest.TestCase):
                         record["sha256"], hashlib.sha256(path.read_bytes()).hexdigest()
                     )
 
+    def test_indexed_cuda_records_accelerator_name(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "image.png"
+            Image.new("RGB", (8, 8), "white").save(path)
+            output = io.StringIO()
+            with (
+                patch("detecter.cure.infer", return_value=0.5),
+                patch("detecter.cure.torch.cuda.is_available", return_value=True),
+                patch(
+                    "detecter.cure.torch.cuda.get_device_name",
+                    return_value="Example GPU",
+                ) as get_device_name,
+                redirect_stdout(output),
+            ):
+                code = main([str(path), "--device", "cuda:0"])
+            record = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(record["environment"]["accelerator"], "Example GPU")
+            get_device_name.assert_called_once_with("cuda:0")
+
     def test_adapter_downloads_once_reuses_verified_cache_and_rejects_corruption(self):
         from detecter.cure import SOURCE_COMMIT, adapter_path
 

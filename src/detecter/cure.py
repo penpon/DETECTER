@@ -385,8 +385,6 @@ def measure(
         "raw_score": None,
         "error": None,
     }
-    if device == "cuda" and torch.cuda.is_available():
-        record["environment"]["accelerator"] = torch.cuda.get_device_name(device)
     try:
         actual_hash = file_sha256(path)
         record["observed_sha256"] = actual_hash
@@ -406,6 +404,8 @@ def measure(
         )
         if not math.isfinite(score):
             raise ValueError("モデルが有限数値ではないスコアを返しました")
+        if torch.device(device).type == "cuda":
+            record["environment"]["accelerator"] = torch.cuda.get_device_name(device)
         record.update(status="ok", raw_score=score)
     except Exception as error:  # noqa: BLE001 - every failed image needs a record
         record["error"] = f"{type(error).__name__}: {error}"
