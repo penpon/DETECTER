@@ -14,7 +14,7 @@ import tempfile
 import time
 import urllib.request
 import warnings
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -815,12 +815,51 @@ def analyze_full_area_tiles(
     }
 
 
+def _synthid_jev_view(section: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep only the display facts; file identity never goes to Jev."""
+    if not isinstance(section, dict) or section.get("status") != "linked":
+        return {"status": "not_linked", "state": "not_checked"}
+    state = section.get("state")
+    if state not in {"detected", "not_detected", "not_checked", "unverifiable"}:
+        state = "unverifiable"
+    return {
+        "status": "linked",
+        "state": state,
+        "manual": True,
+        "automatically_verified": False,
+        "checked_at": section.get("checked_at"),
+        "route": section.get("route"),
+        "evidence": section.get("evidence"),
+        "interpretation": section.get("interpretation"),
+    }
+
+
+def _synthid_limitation(section: dict[str, Any] | None) -> str:
+    if not isinstance(section, dict) or section.get("status") != "linked":
+        return "SynthID was not checked."
+    state = section.get("state")
+    if state == "detected":
+        return (
+            "Manual SynthID result: detected. "
+            "Treat as evidence of Google AI generation or editing, "
+            "not as proof of full-image generation."
+        )
+    if state == "not_detected":
+        return (
+            "Manual SynthID result: not detected. "
+            "This does not prove a real photograph "
+            "and does not rule out other AI generation."
+        )
+    return f"Manual SynthID result: {state}. No SynthID evidence confirmed."
+
+
 def build_jev_state(
     media: dict[str, Any],
     c2pa_result: dict[str, Any],
     tile_result: dict[str, Any],
     *,
     input_variant: str,
+    synthid: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the text-only state without file identity or local verdict fields."""
     return {
@@ -833,11 +872,12 @@ def build_jev_state(
         },
         "c2pa": summarize_c2pa(c2pa_result),
         "universal_fake_detect": tile_result,
+        "synthid": _synthid_jev_view(synthid),
         "limitations": [
             "Jev receives text-only state; no image bytes or base64 are sent.",
             "UniversalFakeDetect scores are uncalibrated detector scores, not probabilities of correctness.",
             "All tile scores use the same UniversalFakeDetect detector.",
-            "SynthID was not checked.",
+            _synthid_limitation(synthid),
             "No detected signal is not proof that the image is a real photograph.",
         ],
     }
@@ -913,6 +953,8 @@ def analyze_image(
     check_c2pa: bool = True,
     c2pa_trust_anchors: Path | None = None,
     max_bytes: int = MAX_INPUT_BYTES,
+    synthid_records: Sequence[Mapping[str, Any]] | None = None,
+    image_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     resolved = path.expanduser().resolve()
@@ -940,6 +982,13 @@ def analyze_image(
                 **detector.metadata(),
                 "error": f"{type(error).__name__}: {error}",
             }
+    from .synthid_manual import summarize_synthid
+
+    synthid = summarize_synthid(
+        image_id=image_id if image_id is not None else str(resolved),
+        sha256=media["sha256"],
+        records=synthid_records,
+    )
     return {
         "schema_version": 1,
         "analyzed_at": datetime.now(UTC).isoformat(),
@@ -947,6 +996,7 @@ def analyze_image(
         "media": media,
         "c2pa": c2pa_result,
         "universal_fake_detect": ufd_result,
+        "synthid": synthid,
         "verdict": provisional_verdict(c2pa_result, ufd_result),
         "duration_ms": round((time.perf_counter() - started) * 1000, 3),
     }
