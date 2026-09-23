@@ -5,6 +5,7 @@ import importlib
 import json
 import math
 import os
+import re
 import shutil
 import statistics
 import sys
@@ -43,6 +44,38 @@ AI_SOURCE_SUFFIXES = (
     "/trainedAlgorithmicMedia",
     "/compositeWithTrainedAlgorithmicMedia",
 )
+C2PA_MODEL_TYPES = {
+    "c2pa.types.model",
+    "c2pa.types.model.caffe",
+    "c2pa.types.model.caffe2",
+    "c2pa.types.model.catboost",
+    "c2pa.types.model.coreml",
+    "c2pa.types.model.flax",
+    "c2pa.types.model.huggingface.transformers",
+    "c2pa.types.model.jax",
+    "c2pa.types.model.keras",
+    "c2pa.types.model.lightgbm",
+    "c2pa.types.model.ml_net",
+    "c2pa.types.model.mxnet",
+    "c2pa.types.model.onnx",
+    "c2pa.types.model.openvino",
+    "c2pa.types.model.openvino.parameter",
+    "c2pa.types.model.openvino.topology",
+    "c2pa.types.model.paddle",
+    "c2pa.types.model.pytorch",
+    "c2pa.types.model.sklearn",
+    "c2pa.types.model.tensorflow",
+    "c2pa.types.model.tensorrt",
+    "c2pa.types.model.tflite",
+    "c2pa.types.model.torchscript",
+    "c2pa.types.model.xgboost",
+}
+C2PA_HUMAN_OVERSIGHT_LEVELS = {
+    "fully_autonomous",
+    "prompt_guided",
+    "human_validated",
+}
+C2PA_SCIENTIFIC_DOMAIN = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
 
 def default_cache_dir() -> Path:
@@ -230,21 +263,38 @@ def _ai_disclosure_records(assertions: Any) -> list[dict[str, Any]]:
         if not isinstance(data, dict):
             continue
         model_type = data.get("modelType")
-        if not isinstance(model_type, str) or not model_type.strip():
+        if not isinstance(model_type, str) or model_type not in C2PA_MODEL_TYPES:
             continue
         profile = data.get("contentProfile")
+        if "contentProfile" in data and (
+            not isinstance(profile, dict) or set(profile) - {"humanOversightLevel"}
+        ):
+            continue
         oversight = None
-        if isinstance(profile, dict) and isinstance(
-            profile.get("humanOversightLevel"), str
-        ):
+        if isinstance(profile, dict) and "humanOversightLevel" in profile:
             oversight = profile["humanOversightLevel"]
-        domains = data.get("scientificDomain")
-        if isinstance(domains, str):
-            domains = [domains]
-        if not isinstance(domains, list) or not all(
-            isinstance(item, str) for item in domains
+            if (
+                not isinstance(oversight, str)
+                or oversight not in C2PA_HUMAN_OVERSIGHT_LEVELS
+            ):
+                continue
+        if any(
+            key in data and not isinstance(data[key], str)
+            for key in ("modelName", "modelIdentifier")
         ):
-            domains = []
+            continue
+        domains = data.get("scientificDomain")
+        if "scientificDomain" in data and (
+            not isinstance(domains, list)
+            or not domains
+            or not all(
+                isinstance(item, str) and C2PA_SCIENTIFIC_DOMAIN.fullmatch(item)
+                for item in domains
+            )
+        ):
+            continue
+        if "metadata" in data and not isinstance(data["metadata"], dict):
+            continue
         record: dict[str, Any] = {"model_type": model_type}
         if isinstance(data.get("modelName"), str):
             record["model_name"] = data["modelName"]

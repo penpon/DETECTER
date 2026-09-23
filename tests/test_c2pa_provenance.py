@@ -375,7 +375,7 @@ class C2paProvenanceTests(unittest.TestCase):
                     "modelName": "example-model",
                     "modelIdentifier": "pkg:huggingface/example/model@main",
                     "contentProfile": {"humanOversightLevel": "fully_autonomous"},
-                    "scientificDomain": "cs.AI",
+                    "scientificDomain": ["cs.AI"],
                 },
             }
         )
@@ -421,6 +421,46 @@ class C2paProvenanceTests(unittest.TestCase):
         self.assertEqual(result["ai_disclosure"], [])
         verdict = provisional_verdict(result, {"status": "ok", "predicted_ai": False})
         self.assertEqual(verdict["state"], "no_ai_signal_detected")
+
+    def test_invalid_disclosure_fields_cannot_become_trusted_ai_evidence(self):
+        model_type = "c2pa.types.model.onnx"
+        invalid_data = (
+            {"modelType": "unknown.model.type"},
+            {"modelType": model_type, "contentProfile": "fully_autonomous"},
+            {
+                "modelType": model_type,
+                "contentProfile": {"humanOversightLevel": "human"},
+            },
+            {"modelType": model_type, "scientificDomain": "cs.AI"},
+            {"modelType": model_type, "scientificDomain": ["bad domain"]},
+            {"modelType": model_type, "modelName": 123},
+            {"modelType": model_type, "metadata": []},
+        )
+        for data in invalid_data:
+            with self.subTest(data=data), tempfile.TemporaryDirectory() as directory:
+                anchors = Path(directory) / "anchors.pem"
+                anchors.write_text("synthetic-test-anchors")
+                module = reader_module(
+                    success=(
+                        "claimSignature.validated",
+                        "signingCredential.trusted",
+                        "assertion.dataHash.match",
+                    ),
+                    source="digitalCreation",
+                    action="c2pa.created",
+                )
+                active = module.Reader.try_create().get_active_manifest()
+                active["assertions"].append(
+                    {"label": "c2pa.ai-disclosure", "data": data}
+                )
+                with patch.dict("sys.modules", {"c2pa": module}):
+                    result = inspect_c2pa(Path("synthetic.png"), trust_anchors=anchors)
+                self.assertTrue(result["confirmed"])
+                self.assertFalse(result["ai_disclosure_assertion"])
+                verdict = provisional_verdict(
+                    result, {"status": "ok", "predicted_ai": False}
+                )
+                self.assertEqual(verdict["state"], "no_ai_signal_detected")
 
     def test_ingredient_disclosure_is_not_the_current_asset_claim(self):
         module = reader_module(
