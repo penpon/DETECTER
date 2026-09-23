@@ -9,7 +9,7 @@ GPT Image、Nano Banana、Midjourneyを中心に、画像の来歴情報と既�
 - ネットワークへ接続せずに行うC2PA読み取り・署名検証
 - UniversalFakeDetectの公開済みモデルによる生スコア
 - 画像ごとのJSON Lines記録
-- JPEG、PNG、WebPの入力検証
+- JPEG、PNG、WebP、HEIC、HEIFの入力検証
 
 追加学習、公式外部透かし検証、Web画面、管理画面、Paperspace配備はまだ含みません。
 

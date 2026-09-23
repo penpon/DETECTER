@@ -22,7 +22,7 @@ from .core import (
     quantized_pixel_grid,
 )
 
-IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 JEV_MODEL = "jev-1.13.0"
 JEV_QUESTION_ID = "ai_involvement"
 JEV_MAX_LOGICAL_IMAGES = 4
@@ -285,7 +285,7 @@ def parser() -> argparse.ArgumentParser:
     analyze = subcommands.add_parser(
         "analyze", help="画像またはディレクトリを解析します"
     )
-    analyze.add_argument("inputs", nargs="+", help="JPEG、PNG、WebPのパス")
+    analyze.add_argument("inputs", nargs="+", help="JPEG、PNG、WebP、HEIC、HEIFのパス")
     analyze.add_argument(
         "--output",
         type=Path,

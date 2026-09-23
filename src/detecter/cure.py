@@ -18,7 +18,13 @@ from PIL import Image
 from torch import nn
 from torch.nn import functional as F
 
-from .core import _download, default_cache_dir, file_sha256, inspect_image
+from .core import (
+    _download,
+    decoded_image,
+    default_cache_dir,
+    file_sha256,
+    inspect_image,
+)
 
 MODEL = "cure"
 SOURCE_COMMIT = "8f7832c83dcd3f4f89de955103e94a64ddc3cdc9"
@@ -47,9 +53,9 @@ PREPROCESSING = {
     "mean": [0.5, 0.5, 0.5],
     "std": [0.5, 0.5, 0.5],
     "dtype": "float32",
-    "exif_transpose": False,
+    "exif_transpose": True,
 }
-PREPROCESSING_VERSION = f"{SOURCE_COMMIT}:cure-336-rgb-v2"
+PREPROCESSING_VERSION = f"{SOURCE_COMMIT}:cure-336-rgb-exif-v3"
 IMPLEMENTATION_SHA256 = file_sha256(Path(__file__))
 
 
@@ -212,20 +218,18 @@ def preprocess(image: Image.Image) -> Any:
     return pipeline(image=np.asarray(image.convert("RGB")))["image"]
 
 
-def preprocess_image(path: Path) -> Any:
+def preprocess_image(path: Path, *, image_format: str | None = None) -> Any:
     path = Path(path).expanduser()
-    with Image.open(path) as source:
-        is_png = source.format == "PNG"
-        image = source.convert("RGB")
-        image.load()
-    if is_png:
-        buffer = io.BytesIO()
-        image.save(buffer, format="JPEG", quality=96)
-        buffer.seek(0)
-        with Image.open(buffer) as decoded:
-            image = decoded.convert("RGB")
-            image.load()
-    return preprocess(image)
+    image_format = image_format or inspect_image(path)["format"]
+    with decoded_image(path) as image:
+        if image_format == "PNG":
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=96)
+            buffer.seek(0)
+            with Image.open(buffer) as decoded:
+                image = decoded.convert("RGB")
+                image.load()
+        return preprocess(image)
 
 
 def adapter_path(
@@ -321,6 +325,7 @@ def load_model(
 def infer(
     path: Path,
     *,
+    image_format: str | None = None,
     cache_dir: Path | None = None,
     model: Any = None,
     adapter_checkpoint: Path | None = None,
@@ -334,7 +339,7 @@ def infer(
             base_checkpoint=base_checkpoint,
             device=device,
         )
-    tensor = preprocess_image(path).unsqueeze(0)
+    tensor = preprocess_image(path, image_format=image_format).unsqueeze(0)
     target = next(model.parameters()).device
     with torch.inference_mode():
         logits = model(tensor.to(target))
@@ -400,11 +405,12 @@ def measure(
         if expected_sha256 is not None and actual_hash != expected_sha256:
             raise ValueError("image hash mismatch")
         record["sha256"] = actual_hash
-        inspect_image(path)
+        media = inspect_image(path)
         if model_error is not None:
             raise model_error
         score = infer(
             path,
+            image_format=media["format"],
             cache_dir=cache_dir,
             model=model,
             adapter_checkpoint=adapter_checkpoint,

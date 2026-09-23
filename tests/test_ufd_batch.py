@@ -69,6 +69,7 @@ class UfdBatchTests(unittest.TestCase):
             )
             self.assertEqual([r["status"] for r in records], ["ok", "error"])
             self.assertEqual(records[0]["raw_score"], 0.25)
+            self.assertIsInstance(records[0]["environment"]["pillow_heif"], str)
             self.assertEqual(detector.path, path)
             self.assertNotIn("label", records[0])
             self.assertNotIn("generator", records[0])

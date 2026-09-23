@@ -31,11 +31,11 @@ UFD_HEAD_SHA256 = "477100745713bcc957beb2b40859536859b6483fd6301b3b9293151b194c7
 UFD_CLIP_MODEL = "ViT-L/14"
 UFD_CLIP_SHA256 = "b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836"
 UFD_WEIGHTS_VERSION = f"{UFD_HEAD_SHA256}:{UFD_CLIP_SHA256}"
-UFD_PREPROCESSING_VERSION = "ufd-rgb-center224-clip-normalize-v1"
+UFD_PREPROCESSING_VERSION = "ufd-rgb-exif-center224-clip-normalize-v2"
 UFD_DEFAULT_THRESHOLD = 0.5
 MAX_INPUT_BYTES = 50 * 1024 * 1024
 MAX_IMAGE_PIXELS = 100_000_000
-SUPPORTED_FORMATS = {"JPEG", "PNG", "WEBP"}
+SUPPORTED_FORMATS = {"JPEG", "PNG", "WEBP", "HEIF"}
 UFD_TILE_SIZE = 224
 UFD_TILE_MAX_AXIS = 8
 UFD_TILE_BATCH_SIZE = 16
@@ -95,6 +95,35 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+_HEIF_REGISTERED = False
+
+
+def ensure_heif_opener() -> None:
+    """Register the HEIF opener so HEIC/HEIF files decode via Pillow."""
+    global _HEIF_REGISTERED
+    if _HEIF_REGISTERED:
+        return
+    try:
+        import pillow_heif
+    except ImportError as error:
+        raise ValueError(
+            "HEIC/HEIF画像を読み込めません: pillow-heifが必要です"
+        ) from error
+    pillow_heif.register_heif_opener()
+    _HEIF_REGISTERED = True
+
+
+def decoded_image(path: Path) -> Image.Image:
+    """Open an image for inference with EXIF orientation applied.
+
+    The returned RGB image is owned by the caller. The input file is
+    never modified; hash and C2PA checks must use the original path.
+    """
+    ensure_heif_opener()
+    with Image.open(path) as source:
+        return ImageOps.exif_transpose(source).convert("RGB")
+
+
 def inspect_image(path: Path, *, max_bytes: int = MAX_INPUT_BYTES) -> dict[str, Any]:
     path = path.expanduser().resolve()
     if not path.is_file():
@@ -104,6 +133,7 @@ def inspect_image(path: Path, *, max_bytes: int = MAX_INPUT_BYTES) -> dict[str, 
         raise ValueError(
             f"画像が上限 {max_bytes} bytes を超えています: {byte_size} bytes"
         )
+    ensure_heif_opener()
     try:
         with Image.open(path) as image:
             image_format = image.format
@@ -157,8 +187,8 @@ def quantized_pixel_grid(
     """Downsample an image with BOX averaging and quantize RGB to 0..15."""
     if size <= 0:
         raise ValueError("画素グリッドのサイズは1以上にしてください")
-    with Image.open(path) as source:
-        image = source.convert("RGB").resize((size, size), Image.Resampling.BOX)
+    with decoded_image(path) as source:
+        image = source.resize((size, size), Image.Resampling.BOX)
         pixels = image.load()
         return [
             [
@@ -186,8 +216,7 @@ def create_derived_jpeg(
     ) as temporary:
         target = Path(temporary.name)
     try:
-        with Image.open(resolved) as source:
-            image = ImageOps.exif_transpose(source).convert("RGB")
+        with decoded_image(resolved) as image:
             long_side = max(image.size)
             if long_side != 1024:
                 scale = 1024 / long_side
@@ -692,7 +721,7 @@ class UfdDetector:
         return self.score_images([image])[0]
 
     def score(self, path: Path) -> float:
-        with Image.open(path) as image:
+        with decoded_image(path) as image:
             return self.score_image(image)
 
     def metadata(self) -> dict[str, Any]:
@@ -748,18 +777,21 @@ def analyze_full_area_tiles(
     max_tiles_per_axis = min(max_tiles_per_axis, UFD_TILE_MAX_AXIS)
     batch_size = min(batch_size, UFD_TILE_BATCH_SIZE)
     resolved = path.expanduser().resolve()
-    media = inspect_image(resolved, max_bytes=max_bytes)
-    bounds = tile_bounds(
-        media["width"],
-        media["height"],
-        tile_size=tile_size,
-        max_tiles_per_axis=max_tiles_per_axis,
-    )
-    columns = min(max_tiles_per_axis, max(1, math.ceil(media["width"] / tile_size)))
-    rows = min(max_tiles_per_axis, max(1, math.ceil(media["height"] / tile_size)))
+    inspect_image(resolved, max_bytes=max_bytes)
+    bounds: list[tuple[int, int, int, int]] = []
+    rows = columns = 0
     try:
-        with Image.open(resolved) as source:
-            image = source.convert("RGB")
+        with decoded_image(resolved) as image:
+            bounds = tile_bounds(
+                image.width,
+                image.height,
+                tile_size=tile_size,
+                max_tiles_per_axis=max_tiles_per_axis,
+            )
+            columns = min(
+                max_tiles_per_axis, max(1, math.ceil(image.width / tile_size))
+            )
+            rows = min(max_tiles_per_axis, max(1, math.ceil(image.height / tile_size)))
             scores: list[float] = []
             for start in range(0, len(bounds), batch_size):
                 batch_bounds = bounds[start : start + batch_size]

@@ -11,10 +11,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageOps
+from PIL import Image
 from PIL import __version__ as PILLOW_VERSION
 
-from .core import inspect_image
+from .core import decoded_image, inspect_image
 from .ledger import read_ledger
 
 PREPROCESSING_VERSION = "derive-jpeg-and-resize-v1"
@@ -48,8 +48,7 @@ def derive_images(
     ]
     for row in sorted(rows, key=lambda item: item["image_id"]):
         inspect_image(Path(row["path"]))
-        with Image.open(row["path"]) as source:
-            image = ImageOps.exif_transpose(source).convert("RGB")
+        image = decoded_image(Path(row["path"]))
         image.info.clear()
         for operation, value in requested:
             converted = image.copy()
