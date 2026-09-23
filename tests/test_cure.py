@@ -51,8 +51,12 @@ class CureTests(unittest.TestCase):
             self.assertIn(ADAPTER_SHA256, record["weights_version"])
             self.assertIn(BASE_REVISION, record["weights_version"])
             self.assertIn(BASE_SHA256, record["weights_version"])
-            self.assertTrue(record["preprocessing_version"])
+            self.assertTrue(record["preprocessing_version"].endswith("cure-336-rgb-v2"))
             self.assertEqual(record["preprocessing"]["resize"], [336, 336])
+            self.assertEqual(
+                record["preprocessing"]["png_recompress"]["when"],
+                "decoded_format_is_png",
+            )
             for key in ("label", "split", "verdict", "probability", "prediction"):
                 self.assertNotIn(key, record)
 

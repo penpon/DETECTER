@@ -33,7 +33,11 @@ BASE_SHA256 = "0cdab5b338cbaa1e7a5dcd1b2fb4c9f4d5df1abd289564658edbab64a650e7e8"
 ARCHITECTURE = "pe-core-l14-336 visual tower + qv-lora-r64 + subspace-128 + linear-2"
 PREPROCESSING = {
     "color_mode": "RGB",
-    "png_recompress": {"format": "JPEG", "quality": 96},
+    "png_recompress": {
+        "when": "decoded_format_is_png",
+        "format": "JPEG",
+        "quality": 96,
+    },
     "smallest_max_size": 390,
     "center_crop": 390,
     "resize": [336, 336],
@@ -44,7 +48,7 @@ PREPROCESSING = {
     "dtype": "float32",
     "exif_transpose": False,
 }
-PREPROCESSING_VERSION = f"{SOURCE_COMMIT}:cure-336-rgb-v1"
+PREPROCESSING_VERSION = f"{SOURCE_COMMIT}:cure-336-rgb-v2"
 
 
 # The vision backbone below is adapted from Perception Encoder by Meta
