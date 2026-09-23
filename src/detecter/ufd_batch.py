@@ -15,6 +15,7 @@ from typing import Any
 from .core import (
     UFD_COMMIT,
     UFD_HEAD_SHA256,
+    UFD_PREPROCESSING_VERSION,
     UfdDetector,
     analyze_full_area_tiles,
     default_cache_dir,
@@ -23,7 +24,7 @@ from .core import (
 
 CLIP_SHA256 = "b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836"
 WEIGHTS_VERSION = f"{UFD_HEAD_SHA256}:{CLIP_SHA256}"
-PREPROCESSING_VERSION = "ufd-rgb-exif-center224-clip-normalize-v2"
+PREPROCESSING_VERSION = UFD_PREPROCESSING_VERSION
 TILE_PREPROCESSING_VERSION = "ufd-rgb-exif-grid8-lanczos224-mean-v2"
 
 
