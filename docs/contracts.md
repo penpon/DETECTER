@@ -45,7 +45,8 @@
 
 判定記録は `image_id`、`sha256`、モデル・重み・前処理の識別情報、`config_id`、
 `state`（`ai_likely` / `no_ai_signal_detected` / `inconclusive`）、
-`reasons`（保留理由の配列）を保持します。欠測と0%を区別します。
+`reasons`（判定理由と診断上の矛盾）を保持します。`hold_reasons` は
+`inconclusive` の理由だけを含みます。欠測と0%を区別します。
 評価は画像単位と元画像グループ単位を明示し、失敗・保留した生成画像も分母に残します。
 
 ## 来歴

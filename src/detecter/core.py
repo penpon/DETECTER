@@ -5,6 +5,7 @@ import importlib
 import json
 import math
 import os
+import re
 import shutil
 import statistics
 import sys
@@ -43,6 +44,38 @@ AI_SOURCE_SUFFIXES = (
     "/trainedAlgorithmicMedia",
     "/compositeWithTrainedAlgorithmicMedia",
 )
+C2PA_MODEL_TYPES = {
+    "c2pa.types.model",
+    "c2pa.types.model.caffe",
+    "c2pa.types.model.caffe2",
+    "c2pa.types.model.catboost",
+    "c2pa.types.model.coreml",
+    "c2pa.types.model.flax",
+    "c2pa.types.model.huggingface.transformers",
+    "c2pa.types.model.jax",
+    "c2pa.types.model.keras",
+    "c2pa.types.model.lightgbm",
+    "c2pa.types.model.ml_net",
+    "c2pa.types.model.mxnet",
+    "c2pa.types.model.onnx",
+    "c2pa.types.model.openvino",
+    "c2pa.types.model.openvino.parameter",
+    "c2pa.types.model.openvino.topology",
+    "c2pa.types.model.paddle",
+    "c2pa.types.model.pytorch",
+    "c2pa.types.model.sklearn",
+    "c2pa.types.model.tensorflow",
+    "c2pa.types.model.tensorrt",
+    "c2pa.types.model.tflite",
+    "c2pa.types.model.torchscript",
+    "c2pa.types.model.xgboost",
+}
+C2PA_HUMAN_OVERSIGHT_LEVELS = {
+    "fully_autonomous",
+    "prompt_guided",
+    "human_validated",
+}
+C2PA_SCIENTIFIC_DOMAIN = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
 
 def default_cache_dir() -> Path:
@@ -214,6 +247,87 @@ def summarize_c2pa(c2pa_result: dict[str, Any]) -> dict[str, Any]:
         "ai_source_types": source_types,
         "data_hash": _data_hash_status(c2pa_result),
     }
+
+
+def _ai_disclosure_records(assertions: Any) -> list[dict[str, Any]]:
+    """Read C2PA 2.4 c2pa.ai-disclosure from the active manifest only."""
+    records: list[dict[str, Any]] = []
+    if not isinstance(assertions, list):
+        return records
+    for assertion in assertions:
+        if not isinstance(assertion, dict):
+            continue
+        if assertion.get("label") != "c2pa.ai-disclosure":
+            continue
+        data = assertion.get("data")
+        if not isinstance(data, dict):
+            continue
+        if set(data) - {
+            "modelType",
+            "modelName",
+            "modelIdentifier",
+            "contentProfile",
+            "scientificDomain",
+            "metadata",
+        }:
+            continue
+        model_type = data.get("modelType")
+        if not isinstance(model_type, str) or model_type not in C2PA_MODEL_TYPES:
+            continue
+        profile = data.get("contentProfile")
+        if "contentProfile" in data and (
+            not isinstance(profile, dict) or set(profile) - {"humanOversightLevel"}
+        ):
+            continue
+        oversight = None
+        if isinstance(profile, dict) and "humanOversightLevel" in profile:
+            oversight = profile["humanOversightLevel"]
+            if (
+                not isinstance(oversight, str)
+                or oversight not in C2PA_HUMAN_OVERSIGHT_LEVELS
+            ):
+                continue
+        if any(
+            key in data and not isinstance(data[key], str)
+            for key in ("modelName", "modelIdentifier")
+        ):
+            continue
+        domains = data.get("scientificDomain")
+        if isinstance(domains, str):
+            domains = [domains]
+        if "scientificDomain" in data and (
+            not isinstance(domains, list)
+            or not domains
+            or not all(
+                isinstance(item, str) and C2PA_SCIENTIFIC_DOMAIN.fullmatch(item)
+                for item in domains
+            )
+        ):
+            continue
+        if "metadata" in data and (
+            not isinstance(data["metadata"], dict)
+            or any(not isinstance(key, str) for key in data["metadata"])
+        ):
+            continue
+        record: dict[str, Any] = {"model_type": model_type}
+        if isinstance(data.get("modelName"), str):
+            record["model_name"] = data["modelName"]
+        if isinstance(data.get("modelIdentifier"), str):
+            record["model_identifier"] = data["modelIdentifier"]
+        if oversight is not None:
+            record["human_oversight_level"] = oversight
+        if domains:
+            record["scientific_domain"] = sorted(set(domains))
+        records.append(record)
+    return records
+
+
+def _has_ai_claim(c2pa_result: dict[str, Any]) -> bool:
+    """AI usage claim from actions info or C2PA 2.4 AI disclosure."""
+    return bool(
+        c2pa_result.get("ai_source_assertion")
+        or c2pa_result.get("ai_disclosure_assertion")
+    )
 
 
 def _data_hash_status(c2pa_result: dict[str, Any]) -> str:
@@ -428,6 +542,7 @@ def inspect_c2pa(
     ai_source_assertion = any(
         source_type.endswith(AI_SOURCE_SUFFIXES) for source_type in source_types
     )
+    ai_disclosure = _ai_disclosure_records(active.get("assertions", []))
     signature_info = active.get("signature_info")
     if not isinstance(signature_info, dict):
         signature_info = {}
@@ -454,6 +569,8 @@ def inspect_c2pa(
         "actions": actions,
         "digital_source_types": source_types,
         "ai_source_assertion": ai_source_assertion,
+        "ai_disclosure": ai_disclosure,
+        "ai_disclosure_assertion": bool(ai_disclosure),
         "generation_scope": generation_scope,
     }
 
@@ -742,24 +859,31 @@ def provisional_verdict(
     if (
         c2pa_result.get("status") == "present"
         and c2pa_result.get("confirmed")
-        and c2pa_result.get("ai_source_assertion")
+        and _has_ai_claim(c2pa_result)
     ):
+        classifier_disagrees = ufd_result.get("status") == "ok" and not ufd_result.get(
+            "predicted_ai"
+        )
+        if c2pa_result.get("generation_scope") == "partial":
+            reason = (
+                "信頼済みC2PAにAIによる部分編集の記録があります。"
+                "全体生成の根拠ではありません"
+            )
+        else:
+            reason = "信頼済みC2PAにAI生成・編集の主張があります"
+        if classifier_disagrees:
+            reason += "。分類器スコアは暫定しきい値未満のため、根拠の食い違いを確認してください"
         return {
             "state": "ai_evidence_confirmed",
-            "reason": (
-                "信頼済みC2PAにAIによる部分編集の記録があります。全体生成の根拠ではありません"
-                if c2pa_result.get("generation_scope") == "partial"
-                else "信頼済みC2PAにAI生成・編集の出典種別があります"
-            ),
+            "reason": reason,
             "generation_scope": c2pa_result.get("generation_scope", "unknown"),
+            "evidence_conflict": classifier_disagrees,
             "experimental": True,
         }
-    if c2pa_result.get("status") == "present" and c2pa_result.get(
-        "ai_source_assertion"
-    ):
+    if c2pa_result.get("status") == "present" and _has_ai_claim(c2pa_result):
         return {
             "state": "ai_likely",
-            "reason": "C2PAにAI生成・編集の出典種別がありますが、署名者は信頼済みではありません",
+            "reason": "C2PAにAI生成・編集の主張がありますが、署名者は信頼済みではありません",
             "experimental": True,
         }
     if ufd_result.get("status") == "ok" and ufd_result.get("predicted_ai"):
