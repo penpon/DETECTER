@@ -216,8 +216,7 @@ def create_derived_jpeg(
     ) as temporary:
         target = Path(temporary.name)
     try:
-        with Image.open(resolved) as source:
-            image = ImageOps.exif_transpose(source).convert("RGB")
+        with decoded_image(resolved) as image:
             long_side = max(image.size)
             if long_side != 1024:
                 scale = 1024 / long_side

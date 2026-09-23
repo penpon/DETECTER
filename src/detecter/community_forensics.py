@@ -115,7 +115,14 @@ def measure(
 ) -> dict[str, Any]:
     path = Path(path).expanduser()
     libraries = {}
-    for name in ("torch", "torchvision", "Pillow", "timm", "safetensors"):
+    for name in (
+        "torch",
+        "torchvision",
+        "Pillow",
+        "pillow-heif",
+        "timm",
+        "safetensors",
+    ):
         try:
             libraries[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:

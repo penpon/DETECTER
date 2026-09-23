@@ -36,6 +36,9 @@ class CommunityForensicsTests(unittest.TestCase):
             self.assertEqual(record["status"], "ok")
             self.assertIsNone(record["error"])
             self.assertEqual(record["environment"]["device"], "cpu")
+            self.assertIsInstance(
+                record["environment"]["libraries"]["pillow-heif"], str
+            )
             self.assertEqual(record["preprocessing"]["center_crop"], 384)
             for key in ("model_version", "weights_version", "preprocessing_version"):
                 self.assertTrue(record[key])

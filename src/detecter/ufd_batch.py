@@ -73,6 +73,7 @@ def measure(
             "torch": importlib.metadata.version("torch"),
             "torchvision": importlib.metadata.version("torchvision"),
             "pillow": importlib.metadata.version("Pillow"),
+            "pillow_heif": importlib.metadata.version("pillow-heif"),
         },
     }
     try:

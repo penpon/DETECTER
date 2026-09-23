@@ -26,7 +26,7 @@ uv run --extra community-forensics python -m detecter.community_forensics image.
 - モデル構造: `timm==1.0.15`の`vit_small_patch16_384.augreg_in21k_ft_in1k`、出力1個。
 - 前処理: RGB変換、短辺440への双線形補間、中央384画素の切り出し、
   0〜1への変換、ImageNetの平均・標準偏差による正規化、32ビット浮動小数点。
-  EXIFの向き補正は公式評価処理と同じく行いません。
+  EXIFの向き補正を行います。前処理版`exif-v2`に識別して記録します。
 
 公式の`ViTClassifier`は同じモデルを`vit`という属性に保持しています。
 この実装は重み名の`vit.`を除き、全パラメータの一致を厳密に検査して読み込みます。
