@@ -49,10 +49,12 @@ PREPROCESSING = {
     "exif_transpose": False,
 }
 PREPROCESSING_VERSION = f"{SOURCE_COMMIT}:cure-336-rgb-v2"
+IMPLEMENTATION_SHA256 = file_sha256(Path(__file__))
 
 
-# The vision backbone below is adapted from Perception Encoder by Meta
-# Platforms, Inc. and affiliates (Apache-2.0), reduced to the fixed-resolution
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# The vision backbone below is adapted from Perception Encoder under the
+# Apache-2.0 license, reduced to the fixed-resolution
 # visual feature path used by CuRe. See THIRD_PARTY.md and the upstream NOTICE.
 class Rotary2D(nn.Module):
     def __init__(self):
@@ -372,6 +374,7 @@ def measure(
         "sha256": expected_sha256,
         "model": MODEL,
         "model_version": SOURCE_COMMIT,
+        "implementation_sha256": IMPLEMENTATION_SHA256,
         "weights_version": (
             f"{SOURCE_COMMIT}:sha256:{ADAPTER_SHA256}"
             f"+base:{BASE_REPO_ID}/{BASE_FILENAME}@{BASE_REVISION}"

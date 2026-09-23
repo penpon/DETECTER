@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
+from detecter import cure
 from detecter.core import file_sha256
 from detecter.cure import (
     ADAPTER_SHA256,
@@ -40,6 +41,9 @@ class CureTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(record["image_id"], "example")
             self.assertEqual(record["model"], MODEL)
+            self.assertEqual(
+                record["implementation_sha256"], file_sha256(Path(cure.__file__))
+            )
             self.assertEqual(
                 record["sha256"], hashlib.sha256(path.read_bytes()).hexdigest()
             )

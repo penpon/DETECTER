@@ -24,6 +24,7 @@ CuReを追加しても既定の判定設定や既定モデルは変わりませ�
 ## 固定する実装
 
 - 公式ソース: `manic-cui/CuRe`の`8f7832c83dcd3f4f89de955103e94a64ddc3cdc9`。
+- 各計測記録の`implementation_sha256`は、実行した`cure.py`のSHA-256です。
 - 公式適合重み: 同リポジトリ`weights/cure_adapter.pt`の上記コミット版。
 - 重みSHA-256: `17cabb334563c15abc8827db87dc272a4aef10f4279025faee1ef8d32c444ae1`。
 - 基盤モデル: `facebook/PE-Core-L14-336`の`PE-Core-L14-336.pt`（約2.7GB）、
