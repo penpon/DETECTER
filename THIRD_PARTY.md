@@ -20,6 +20,8 @@ The vision backbone in `src/detecter/cure.py` adapts the pinned official
 `cure/backbone.py`, itself adapted from Perception Encoder by Meta Platforms,
 Inc. and affiliates under the Apache License 2.0. The preprocessing in
 `src/detecter/cure.py` follows the pinned official `cure/preprocess.py`.
+The Apache-2.0 license text and the upstream PE Core notice are included in
+`LICENSES/Apache-2.0.txt` and `LICENSES/PE-Core-NOTICE.txt`.
 CuRe ships as the optional `cure` extra so the existing UFD and Community
 Forensics execution paths keep their pinned dependencies.
 

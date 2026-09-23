@@ -208,9 +208,10 @@ def preprocess(image: Image.Image) -> Any:
 def preprocess_image(path: Path) -> Any:
     path = Path(path).expanduser()
     with Image.open(path) as source:
+        is_png = source.format == "PNG"
         image = source.convert("RGB")
         image.load()
-    if path.suffix.lower() == ".png":
+    if is_png:
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG", quality=96)
         buffer.seek(0)

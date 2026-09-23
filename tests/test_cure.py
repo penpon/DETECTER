@@ -21,6 +21,7 @@ from detecter.cure import (
     MODEL,
     SOURCE_COMMIT,
     main,
+    preprocess_image,
 )
 
 
@@ -109,6 +110,29 @@ class CureTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(record["environment"]["accelerator"], "Example GPU")
             get_device_name.assert_called_once_with("cuda:0")
+
+    def test_png_recompression_uses_decoded_format_not_filename(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            disguised_png = root / "image.data"
+            disguised_jpeg = root / "image.png"
+            Image.new("RGB", (8, 8), "red").save(disguised_png, format="PNG")
+            Image.new("RGB", (8, 8), "blue").save(disguised_jpeg, format="JPEG")
+            qualities = []
+            save = Image.Image.save
+
+            def save_spy(image, *args, **kwargs):
+                if kwargs.get("format") == "JPEG":
+                    qualities.append(kwargs.get("quality"))
+                return save(image, *args, **kwargs)
+
+            with (
+                patch("detecter.cure.preprocess", return_value=None),
+                patch("detecter.cure.Image.Image.save", new=save_spy),
+            ):
+                preprocess_image(disguised_png)
+                preprocess_image(disguised_jpeg)
+            self.assertEqual(qualities, [96])
 
     def test_adapter_downloads_once_reuses_verified_cache_and_rejects_corruption(self):
         from detecter.cure import SOURCE_COMMIT, adapter_path
