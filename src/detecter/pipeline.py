@@ -616,21 +616,24 @@ def run_pipeline(
             report["unverified"].append("generated_detection_not_measured")
         if real_rows < 3000:
             report["unverified"].append("fewer_than_3000_independent_real_images")
-        if not any(
+        has_generator_breakdown = any(
             row.get("generator")
             for row in ledger
             if row.get("split") == split and row.get("label") == "generated"
-        ):
-            report["unverified"].append("generator_breakdown_not_provided")
-        if not any(
+        )
+        has_camera_breakdown = any(
             row.get("camera")
             for row in ledger
             if row.get("split") == split and row.get("label") == "real"
-        ):
-            report["unverified"].append("camera_breakdown_not_provided")
-        if not any(
+        )
+        has_partial_edit = any(
             row.get("label") == "edited" for row in ledger if row.get("split") == split
-        ):
+        )
+        if not has_generator_breakdown:
+            report["unverified"].append("generator_breakdown_not_provided")
+        if not has_camera_breakdown:
+            report["unverified"].append("camera_breakdown_not_provided")
+        if not has_partial_edit:
             report["unverified"].append("partial_edit_scope_not_evaluated")
         synthetic = any(
             str(row.get("source", "")).lower().startswith("synthetic")
@@ -650,6 +653,9 @@ def run_pipeline(
             and not synthetic
             and processing_complete
             and coverage["met"]
+            and has_generator_breakdown
+            and has_camera_breakdown
+            and has_partial_edit
         ):
             report["status"] = "achieved"
         elif (
@@ -662,6 +668,9 @@ def run_pipeline(
             or synthetic
             or report["stages"]["decision"]["status"] == "invalid"
             or not processing_complete
+            or not has_generator_breakdown
+            or not has_camera_breakdown
+            or not has_partial_edit
         ):
             report["status"] = "insufficient_evidence"
         else:

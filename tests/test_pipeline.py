@@ -125,6 +125,28 @@ def processing(ledger: list[dict]) -> tuple[list[dict], list[dict]]:
     return comparisons, conditions
 
 
+def add_stratification(ledger: list[dict]) -> None:
+    for row in ledger:
+        if row["label"] == "real":
+            row["camera"] = "camera-a"
+        elif row["label"] == "generated":
+            row["generator"] = "gen-a"
+    ledger.append(
+        {
+            "image_id": "edited-0",
+            "sha256": "c" * 64,
+            "source_group": "edited-0",
+            "source": "verified-corpus",
+            "license": "test",
+            "label": "edited",
+            "split": "evaluation",
+            "history": [],
+            "generator": "gen-a",
+            "camera": "camera-a",
+        }
+    )
+
+
 class PipelineTests(unittest.TestCase):
     def test_zero_false_positives_at_3000_has_required_upper_bound(self):
         upper = one_sided_upper_bound(0, 3000)
@@ -134,6 +156,7 @@ class PipelineTests(unittest.TestCase):
     def test_synthetic_final_evaluation_is_achieved_only_with_enough_evidence(self):
         # 30/30全検出で片側95%下限が約0.905となり90%目標を満たす。
         ledger = rows(real=3000, generated=30)
+        add_stratification(ledger)
         measurements, decisions = records(ledger)
         for row in ledger[:3000]:
             decisions[ledger.index(row)]["state"] = "no_ai_signal_detected"
@@ -161,6 +184,7 @@ class PipelineTests(unittest.TestCase):
     def test_point_estimate_above_target_but_lower_below_is_not_met(self):
         # 点推定値90%でも信頼下限が90%未満なら達成にしない。
         ledger = rows(real=3000, generated=10)
+        add_stratification(ledger)
         measurements, decisions = records(ledger)
         for row in ledger[:3000]:
             decisions[ledger.index(row)]["state"] = "no_ai_signal_detected"
@@ -185,8 +209,24 @@ class PipelineTests(unittest.TestCase):
 
     def test_unmet_required_generator_group_is_insufficient_evidence(self):
         ledger = rows(real=3000, generated=30)
+        for row in ledger[:3000]:
+            row["camera"] = "camera-a"
         for index, row in enumerate(ledger[3000:]):
             row["generator"] = "gen-a" if index < 29 else "gen-b"
+        ledger.append(
+            {
+                "image_id": "edited-0",
+                "sha256": "c" * 64,
+                "source_group": "edited-0",
+                "source": "verified-corpus",
+                "license": "test",
+                "label": "edited",
+                "split": "evaluation",
+                "history": [],
+                "generator": "gen-a",
+                "camera": "camera-a",
+            }
+        )
         measurements, decisions = records(ledger)
         for row in ledger[:3000]:
             decisions[ledger.index(row)]["state"] = "no_ai_signal_detected"
@@ -214,6 +254,27 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(met["status"], "achieved")
         self.assertTrue(met["generator_coverage"]["met"])
+
+    def test_missing_stratification_never_reports_achieved(self):
+        ledger = rows(real=3000, generated=30)
+        for index, row in enumerate(ledger[3000:]):
+            row["generator"] = "gen-a"
+        measurements, decisions = records(ledger)
+        for row in ledger[:3000]:
+            decisions[ledger.index(row)]["state"] = "no_ai_signal_detected"
+        comparisons, conditions = processing(ledger)
+        report = run_pipeline(
+            ledger,
+            config(),
+            measurements=measurements,
+            decisions=decisions,
+            comparisons=comparisons,
+            derived_conditions=conditions,
+            required_generators={"gen-a": 30},
+        )
+        self.assertEqual(report["status"], "insufficient_evidence")
+        self.assertIn("camera_breakdown_not_provided", report["unverified"])
+        self.assertIn("partial_edit_scope_not_evaluated", report["unverified"])
 
     def test_generator_coverage_excludes_edits_and_survives_missing_measurements(self):
         ledger = rows(real=1, generated=1)
@@ -276,6 +337,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_bad_final_evaluation_is_not_met(self):
         ledger = rows(real=3000, generated=10)
+        add_stratification(ledger)
         measurements, decisions = records(ledger)
         for row in ledger[:1]:
             decisions[ledger.index(row)]["state"] = "ai_likely"
