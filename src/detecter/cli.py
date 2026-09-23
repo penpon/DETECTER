@@ -539,7 +539,6 @@ def main(argv: list[str] | None = None) -> int:
                                 c2pa_result,
                                 tile_result,
                                 input_variant=input_variant,
-                                synthid=record.get("synthid"),
                             )
                             state_b = deepcopy(state_a)
                             state_b["pixel_grid"] = quantized_pixel_grid(image)

@@ -270,7 +270,7 @@ class SynthIdReportLinkTests(unittest.TestCase):
             self.assertEqual(linked["verdict"], plain["verdict"])
             self.assertEqual(plain["synthid"]["status"], "not_linked")
 
-    def test_cli_links_manual_file_and_kev_state_hides_file_identity(self):
+    def test_cli_links_manual_file_but_keeps_it_out_of_jev_input(self):
         from detecter.cli import main
         from detecter.core import build_jev_state, file_sha256
 
@@ -307,12 +307,15 @@ class SynthIdReportLinkTests(unittest.TestCase):
                 report["c2pa"],
                 {"status": "ok"},
                 input_variant="original",
-                synthid=report["synthid"],
             )
             serialized = json.dumps(state)
             self.assertNotIn(file_sha256(image), serialized)
             self.assertNotIn(str(image.resolve()), serialized)
-            self.assertEqual(state["synthid"]["state"], "unverifiable")
+            self.assertNotIn("synthid", state)
+            self.assertIn(
+                "Manual SynthID results are kept outside this model input.",
+                state["limitations"],
+            )
 
 
 if __name__ == "__main__":
