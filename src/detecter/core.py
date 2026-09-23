@@ -293,6 +293,8 @@ def _ai_disclosure_records(assertions: Any) -> list[dict[str, Any]]:
         ):
             continue
         domains = data.get("scientificDomain")
+        if isinstance(domains, str):
+            domains = [domains]
         if "scientificDomain" in data and (
             not isinstance(domains, list)
             or not domains

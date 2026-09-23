@@ -431,7 +431,7 @@ class C2paProvenanceTests(unittest.TestCase):
                 "modelType": model_type,
                 "contentProfile": {"humanOversightLevel": "human"},
             },
-            {"modelType": model_type, "scientificDomain": "cs.AI"},
+            {"modelType": model_type, "scientificDomain": "bad domain"},
             {"modelType": model_type, "scientificDomain": ["bad domain"]},
             {"modelType": model_type, "modelName": 123},
             {"modelType": model_type, "metadata": []},
@@ -463,6 +463,22 @@ class C2paProvenanceTests(unittest.TestCase):
                     result, {"status": "ok", "predicted_ai": False}
                 )
                 self.assertEqual(verdict["state"], "no_ai_signal_detected")
+
+    def test_scientific_domain_scalar_from_spec_example_is_normalized(self):
+        from detecter.core import _ai_disclosure_records
+
+        records = _ai_disclosure_records(
+            [
+                {
+                    "label": "c2pa.ai-disclosure",
+                    "data": {
+                        "modelType": "c2pa.types.model.onnx",
+                        "scientificDomain": "astro-ph.CO",
+                    },
+                }
+            ]
+        )
+        self.assertEqual(records[0]["scientific_domain"], ["astro-ph.CO"])
 
     def test_ingredient_disclosure_is_not_the_current_asset_claim(self):
         module = reader_module(
