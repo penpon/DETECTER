@@ -345,6 +345,7 @@ def _dispatch_command(raw: list[str]) -> int | None:
         "evaluate": ("detecter.evaluation", "main"),
         "calibrate": ("detecter.calibration", "main"),
         "derive-jpeg": ("detecter.derive_jpeg", "main"),
+        "select-candidate": ("detecter.selection", "main"),
         "synthid-manual": ("detecter.synthid_manual", "main"),
         "evaluate-pipeline": ("detecter.pipeline", "main"),
     }
