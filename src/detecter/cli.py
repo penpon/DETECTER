@@ -334,6 +334,7 @@ def _dispatch_command(raw: list[str]) -> int | None:
         "ledger": ("detecter.ledger", "main"),
         "c2pa-provenance": ("detecter.c2pa_provenance", "main"),
         "community-forensics": ("detecter.community_forensics", "main"),
+        "cure": ("detecter.cure", "main"),
         "ufd-batch": ("detecter.ufd_batch", "main"),
         "compare": ("detecter.comparison", "main"),
         "evaluate": ("detecter.evaluation", "main"),

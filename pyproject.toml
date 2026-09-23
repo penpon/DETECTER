@@ -29,6 +29,11 @@ dev = [
 
 [project.optional-dependencies]
 community-forensics = ["timm==1.0.15", "safetensors==0.5.3"]
+cure = [
+  "albumentations==2.0.8",
+  "huggingface_hub>=0.23",
+  "opencv-python-headless>=4.9,<6",
+]
 
 [project.scripts]
 detecter = "detecter.cli:main"
