@@ -276,6 +276,48 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("camera_breakdown_not_provided", report["unverified"])
         self.assertIn("partial_edit_scope_not_evaluated", report["unverified"])
 
+    def test_unmeasured_edit_and_unnamed_rows_are_insufficient_evidence(self):
+        def report_for(ledger, drop=()):
+            measurements, decisions = records(ledger)
+            for row in ledger[:3000]:
+                decisions[ledger.index(row)]["state"] = "no_ai_signal_detected"
+            measurements = [r for r in measurements if r["image_id"] not in drop]
+            decisions = [r for r in decisions if r["image_id"] not in drop]
+            comparisons, conditions = processing(ledger)
+            return run_pipeline(
+                ledger,
+                config(),
+                measurements=measurements,
+                decisions=decisions,
+                comparisons=comparisons,
+                derived_conditions=conditions,
+                required_generators={"gen-a": 30},
+            )
+
+        baseline = rows(real=3000, generated=30)
+        add_stratification(baseline)
+        self.assertEqual(report_for(baseline)["status"], "achieved")
+
+        unmeasured = rows(real=3000, generated=30)
+        add_stratification(unmeasured)
+        report = report_for(unmeasured, drop={"edited-0"})
+        self.assertEqual(report["status"], "insufficient_evidence")
+        self.assertIn("partial_edit_scope_not_evaluated", report["unverified"])
+
+        unnamed_camera = rows(real=3000, generated=30)
+        add_stratification(unnamed_camera)
+        unnamed_camera[0].pop("camera")
+        report = report_for(unnamed_camera)
+        self.assertEqual(report["status"], "insufficient_evidence")
+        self.assertIn("camera_breakdown_not_provided", report["unverified"])
+
+        unnamed_generator = rows(real=3000, generated=30)
+        add_stratification(unnamed_generator)
+        unnamed_generator[3000].pop("generator")
+        report = report_for(unnamed_generator)
+        self.assertEqual(report["status"], "insufficient_evidence")
+        self.assertIn("generator_breakdown_not_provided", report["unverified"])
+
     def test_generator_coverage_excludes_edits_and_survives_missing_measurements(self):
         ledger = rows(real=1, generated=1)
         ledger[1]["generator"] = "gen-a"

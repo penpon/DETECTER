@@ -616,18 +616,17 @@ def run_pipeline(
             report["unverified"].append("generated_detection_not_measured")
         if real_rows < 3000:
             report["unverified"].append("fewer_than_3000_independent_real_images")
-        has_generator_breakdown = any(
-            row.get("generator")
-            for row in ledger
-            if row.get("split") == split and row.get("label") == "generated"
+        evaluated = evaluation["targets"]
+        generated_rows = [row for row in evaluated if row["label"] == "generated"]
+        real_targets = [row for row in evaluated if row["label"] == "real"]
+        has_generator_breakdown = bool(generated_rows) and all(
+            row.get("generator") for row in generated_rows
         )
-        has_camera_breakdown = any(
-            row.get("camera")
-            for row in ledger
-            if row.get("split") == split and row.get("label") == "real"
+        has_camera_breakdown = bool(real_targets) and all(
+            row.get("camera") for row in real_targets
         )
-        has_partial_edit = any(
-            row.get("label") == "edited" for row in ledger if row.get("split") == split
+        has_partial_edit = (
+            evaluation["metrics"]["edited_detection_rate"].get("status") == "measured"
         )
         if not has_generator_breakdown:
             report["unverified"].append("generator_breakdown_not_provided")
