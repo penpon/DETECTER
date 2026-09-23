@@ -778,17 +778,21 @@ def analyze_full_area_tiles(
     max_tiles_per_axis = min(max_tiles_per_axis, UFD_TILE_MAX_AXIS)
     batch_size = min(batch_size, UFD_TILE_BATCH_SIZE)
     resolved = path.expanduser().resolve()
-    media = inspect_image(resolved, max_bytes=max_bytes)
-    bounds = tile_bounds(
-        media["width"],
-        media["height"],
-        tile_size=tile_size,
-        max_tiles_per_axis=max_tiles_per_axis,
-    )
-    columns = min(max_tiles_per_axis, max(1, math.ceil(media["width"] / tile_size)))
-    rows = min(max_tiles_per_axis, max(1, math.ceil(media["height"] / tile_size)))
+    inspect_image(resolved, max_bytes=max_bytes)
+    bounds: list[tuple[int, int, int, int]] = []
+    rows = columns = 0
     try:
         with decoded_image(resolved) as image:
+            bounds = tile_bounds(
+                image.width,
+                image.height,
+                tile_size=tile_size,
+                max_tiles_per_axis=max_tiles_per_axis,
+            )
+            columns = min(
+                max_tiles_per_axis, max(1, math.ceil(image.width / tile_size))
+            )
+            rows = min(max_tiles_per_axis, max(1, math.ceil(image.height / tile_size)))
             scores: list[float] = []
             for start in range(0, len(bounds), batch_size):
                 batch_bounds = bounds[start : start + batch_size]

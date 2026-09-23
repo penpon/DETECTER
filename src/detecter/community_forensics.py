@@ -14,8 +14,8 @@ from PIL import Image
 
 from .core import (
     _download,
+    decoded_image,
     default_cache_dir,
-    ensure_heif_opener,
     file_sha256,
     inspect_image,
 )
@@ -38,9 +38,9 @@ PREPROCESSING = {
     "mean": [0.485, 0.456, 0.406],
     "std": [0.229, 0.224, 0.225],
     "dtype": "float32",
-    "exif_transpose": False,
+    "exif_transpose": True,
 }
-PREPROCESSING_VERSION = f"{SOURCE_COMMIT}:test-384-rgb-v1"
+PREPROCESSING_VERSION = f"{SOURCE_COMMIT}:test-384-rgb-exif-v2"
 
 
 def preprocess(image: Image.Image) -> Any:
@@ -97,8 +97,7 @@ def infer(path: Path, *, cache_dir: Path | None = None, model: Any = None) -> fl
 
     if model is None:
         model = load_model(cache_dir)
-    ensure_heif_opener()
-    with Image.open(path) as image:
+    with decoded_image(path) as image:
         tensor = preprocess(image).unsqueeze(0)
     with torch.inference_mode():
         return float(model(tensor).item())

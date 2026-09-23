@@ -9,10 +9,13 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
+import torch
 from PIL import Image
 from pillow_heif import from_pillow
 
+from detecter import community_forensics
 from detecter.cli import collect_images, main
 from detecter.core import (
     analyze_image,
@@ -96,8 +99,33 @@ class HeicTests(unittest.TestCase):
             before = path.read_bytes()
             with decoded_image(path) as decoded:
                 self.assertEqual(decoded.size, (8, 16))
-                self.assertEqual(decoded.mode, "RGB")
+            self.assertEqual(decoded.mode, "RGB")
             self.assertEqual(path.read_bytes(), before)
+
+    def test_community_forensics_uses_exif_transposed_pixels(self):
+        class Model:
+            def __call__(self, tensor):
+                self.shape = tuple(tensor.shape)
+                return torch.tensor([[0.25]])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "rotated.jpg"
+            exif = Image.Exif()
+            exif[274] = 6
+            Image.new("RGB", (16, 8), "white").save(path, exif=exif)
+            seen: list[tuple[int, int]] = []
+
+            def capture(image):
+                seen.append(image.size)
+                return torch.zeros((3, 384, 384))
+
+            model = Model()
+            with patch("detecter.community_forensics.preprocess", side_effect=capture):
+                score = community_forensics.infer(path, model=model)
+            self.assertEqual(seen, [(8, 16)])
+            self.assertEqual(model.shape, (1, 3, 384, 384))
+            self.assertEqual(score, 0.25)
+            self.assertTrue(community_forensics.PREPROCESSING["exif_transpose"])
 
     def test_pixel_grid_accepts_heic(self):
         with tempfile.TemporaryDirectory() as temporary:
