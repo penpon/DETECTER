@@ -142,6 +142,18 @@ class CureTests(unittest.TestCase):
                 preprocess_image(disguised_jpeg)
             self.assertEqual(qualities, [96])
 
+    def test_preprocessing_records_do_not_share_nested_configuration(self):
+        from detecter.cure import measure
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "image.png"
+            Image.new("RGB", (8, 8), "white").save(path)
+            with patch("detecter.cure.infer", return_value=0.5):
+                first = measure(path, model=object())
+                first["preprocessing"]["png_recompress"]["quality"] = 1
+                second = measure(path, model=object())
+            self.assertEqual(second["preprocessing"]["png_recompress"]["quality"], 96)
+
     def test_adapter_downloads_once_reuses_verified_cache_and_rejects_corruption(self):
         from detecter.cure import SOURCE_COMMIT, adapter_path
 

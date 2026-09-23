@@ -9,6 +9,7 @@ import json
 import math
 import platform
 from collections import OrderedDict
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -381,7 +382,7 @@ def measure(
             f":sha256:{BASE_SHA256}"
         ),
         "preprocessing_version": PREPROCESSING_VERSION,
-        "preprocessing": dict(PREPROCESSING),
+        "preprocessing": deepcopy(PREPROCESSING),
         "environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
