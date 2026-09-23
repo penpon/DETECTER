@@ -109,6 +109,47 @@ class DecisionCliTests(unittest.TestCase):
                 )
                 self.assertEqual(decision["state"], "inconclusive")
 
+    def test_confirmed_ai_evidence_overrides_low_classifier_score(self):
+        for provenance in (
+            {
+                "confirmed": True,
+                "ai_source_assertion": True,
+                "generation_scope": "full",
+            },
+            {
+                "confirmed": True,
+                "ai_source_assertion": False,
+                "ai_disclosure_assertion": True,
+                "generation_scope": "unknown",
+            },
+        ):
+            with self.subTest(provenance=provenance):
+                record = {
+                    "media": {"sha256": "c" * 64},
+                    "c2pa": provenance,
+                    "universal_fake_detect": measurement(score=0.1),
+                }
+                decision = apply_decision(record, decision_config(threshold=0.7))
+                self.assertEqual(decision["state"], "ai_likely")
+                self.assertNotEqual(decision["state"], "no_ai_signal_detected")
+                self.assertIn(
+                    "c2pa_ai_evidence_with_low_classifier_score",
+                    decision["reasons"],
+                )
+
+    def test_unconfirmed_disclosure_does_not_override_low_score(self):
+        record = {
+            "media": {"sha256": "c" * 64},
+            "c2pa": {
+                "confirmed": False,
+                "ai_source_assertion": False,
+                "ai_disclosure_assertion": True,
+            },
+            "universal_fake_detect": measurement(score=0.1),
+        }
+        decision = apply_decision(record, decision_config(threshold=0.7))
+        self.assertEqual(decision["state"], "no_ai_signal_detected")
+
     def test_common_cli_dispatches_evaluate_command(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

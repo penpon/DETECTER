@@ -55,6 +55,16 @@ uv run python -m detecter.c2pa_provenance image.jpg \
 素材となった別画像の履歴は、検査画像の全体生成の根拠にしません。
 既存の暫定判定でも部分編集の範囲を明記します。
 
+C2PA 2.4の `c2pa.ai-disclosure` も対象マニフェストからのみ読み、
+`ai_disclosure`（`model_type`、`model_name`、`model_identifier`、
+`human_oversight_level`、`scientific_domain`）と
+`ai_disclosure_assertion`（開示の有無）として既存のアクション情報と
+ともに保存します。署名の有効性、署名者の信頼、画像との一致、
+全体生成／部分編集は別々の項目に残し、開示の有無で上書きしません。
+未信頼、未検証、画像との結び付きが不明な主張は確認済みのAI生成根拠にしません。
+信頼済みで画像に結び付いたAI生成根拠と低い分類器スコアが併存する場合は、
+最終状態を「AIの信号なし」にせず、根拠の食い違いを理由に明示します。
+
 検証コードは `activeManifest` の `success`、`failure`、`informational` を区別して読みます。
 説明文の文字列や素材画像の検証成功は、検査画像との一致の根拠にしません。
 元の `validation_results` も保存します。

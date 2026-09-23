@@ -357,3 +357,121 @@ class C2paProvenanceTests(unittest.TestCase):
             ],
             "inconclusive",
         )
+
+    def test_ai_disclosure_is_read_alongside_actions(self):
+        module = reader_module(
+            success=(
+                "claimSignature.validated",
+                "signingCredential.trusted",
+                "assertion.dataHash.match",
+            )
+        )
+        active = module.Reader.try_create().get_active_manifest()
+        active["assertions"].append(
+            {
+                "label": "c2pa.ai-disclosure",
+                "data": {
+                    "modelType": "c2pa.types.model.huggingface.transformers",
+                    "modelName": "example-model",
+                    "modelIdentifier": "pkg:huggingface/example/model@main",
+                    "contentProfile": {"humanOversightLevel": "fully_autonomous"},
+                    "scientificDomain": "cs.AI",
+                },
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            anchors = Path(directory) / "anchors.pem"
+            anchors.write_text("synthetic-test-anchors")
+            with patch.dict("sys.modules", {"c2pa": module}):
+                result = inspect_c2pa(Path("synthetic.png"), trust_anchors=anchors)
+        self.assertTrue(result["ai_disclosure_assertion"])
+        self.assertEqual(
+            result["ai_disclosure"],
+            [
+                {
+                    "model_type": "c2pa.types.model.huggingface.transformers",
+                    "model_name": "example-model",
+                    "model_identifier": "pkg:huggingface/example/model@main",
+                    "human_oversight_level": "fully_autonomous",
+                    "scientific_domain": ["cs.AI"],
+                }
+            ],
+        )
+        # Actions info stays alongside the disclosure.
+        self.assertTrue(result["ai_source_assertion"])
+        self.assertEqual(result["signature_state"], "valid")
+        self.assertEqual(result["binding_state"], "match")
+        self.assertEqual(result["generation_scope"], "full")
+
+    def test_ingredient_disclosure_is_not_the_current_asset_claim(self):
+        module = reader_module(
+            success=("claimSignature.validated", "assertion.dataHash.match")
+        )
+        active = module.Reader.try_create().get_active_manifest()
+        actions = active.pop("assertions")
+        active["ingredients"] = [
+            {
+                "assertions": [
+                    *actions,
+                    {
+                        "label": "c2pa.ai-disclosure",
+                        "data": {"modelType": "c2pa.types.model.onnx"},
+                    },
+                ]
+            }
+        ]
+        with patch.dict("sys.modules", {"c2pa": module}):
+            result = inspect_c2pa(Path("synthetic.png"))
+        self.assertFalse(result["ai_disclosure_assertion"])
+        self.assertEqual(result["ai_disclosure"], [])
+        self.assertFalse(result["ai_source_assertion"])
+
+    def test_untrusted_disclosure_is_not_confirmed_evidence(self):
+        module = reader_module(
+            success=("claimSignature.validated", "assertion.dataHash.match"),
+            failure=("signingCredential.untrusted",),
+            source="digitalCreation",
+            action="c2pa.created",
+        )
+        active = module.Reader.try_create().get_active_manifest()
+        active["assertions"].append(
+            {
+                "label": "c2pa.ai-disclosure",
+                "data": {"modelType": "c2pa.types.model.onnx"},
+            }
+        )
+        with patch.dict("sys.modules", {"c2pa": module}):
+            result = inspect_c2pa(Path("synthetic.png"))
+        self.assertTrue(result["ai_disclosure_assertion"])
+        self.assertFalse(result["ai_source_assertion"])
+        self.assertFalse(result["confirmed"])
+        verdict = provisional_verdict(result, {"status": "ok", "predicted_ai": False})
+        self.assertEqual(verdict["state"], "ai_likely")
+
+    def test_trusted_disclosure_with_low_classifier_marks_conflict(self):
+        module = reader_module(
+            success=(
+                "claimSignature.validated",
+                "signingCredential.trusted",
+                "assertion.dataHash.match",
+            ),
+            source="digitalCreation",
+            action="c2pa.created",
+        )
+        active = module.Reader.try_create().get_active_manifest()
+        active["assertions"].append(
+            {
+                "label": "c2pa.ai-disclosure",
+                "data": {"modelType": "c2pa.types.model.onnx"},
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            anchors = Path(directory) / "anchors.pem"
+            anchors.write_text("synthetic-test-anchors")
+            with patch.dict("sys.modules", {"c2pa": module}):
+                result = inspect_c2pa(Path("synthetic.png"), trust_anchors=anchors)
+        self.assertTrue(result["confirmed"])
+        verdict = provisional_verdict(result, {"status": "ok", "predicted_ai": False})
+        self.assertEqual(verdict["state"], "ai_evidence_confirmed")
+        self.assertTrue(verdict["evidence_conflict"])
+        self.assertNotEqual(verdict["state"], "no_ai_signal_detected")
