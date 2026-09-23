@@ -37,6 +37,24 @@ def one_sided_upper_bound(
     return _beta_inverse(confidence, successes + 1, total - successes)
 
 
+def one_sided_lower_bound(
+    successes: int, total: int, *, confidence: float = CONFIDENCE
+) -> float | None:
+    """Return a one-sided 95% lower bound (Clopper-Pearson exact)."""
+    if total < 0 or successes < 0 or successes > total:
+        raise ValueError("successes and total must describe a valid count")
+    if total == 0:
+        return None
+    if not 0 < confidence < 1:
+        raise ValueError("confidence must be between 0 and 1")
+    alpha = 1.0 - confidence
+    if successes == 0:
+        return 0.0
+    if successes == total:
+        return alpha ** (1.0 / total)
+    return _beta_inverse(alpha, successes, total - successes + 1)
+
+
 def _beta_continued_fraction(a: float, b: float, x: float) -> float:
     qab, qap, qam = a + b, a + 1.0, a - 1.0
     c = 1.0
@@ -108,6 +126,98 @@ def _metric_upper(metric: dict[str, Any]) -> dict[str, Any]:
         "method": "clopper_pearson_one_sided",
         "passes": upper is not None and upper <= TARGET_FPR_UPPER,
         "status": metric.get("status"),
+    }
+
+
+def _metric_lower(
+    metric: dict[str, Any], *, target: float = TARGET_GENERATED_RATE
+) -> dict[str, Any]:
+    numerator = metric.get("numerator")
+    denominator = metric.get("denominator")
+    if not isinstance(numerator, int) or not isinstance(denominator, int):
+        return {
+            "lower": None,
+            "passes": False,
+            "status": "insufficient_data",
+            "confidence": CONFIDENCE,
+            "method": "clopper_pearson_one_sided",
+        }
+    lower = (
+        one_sided_lower_bound(numerator, denominator)
+        if metric.get("status") == "measured"
+        else None
+    )
+    return {
+        "successes": numerator,
+        "total": denominator,
+        "lower": lower,
+        "confidence": CONFIDENCE,
+        "method": "clopper_pearson_one_sided",
+        "passes": lower is not None and lower >= target,
+        "status": metric.get("status"),
+    }
+
+
+def _normalize_required_generators(value: Any) -> dict[str, int]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise TypeError("required_generators must be a mapping of name to count")
+    normalized: dict[str, int] = {}
+    for name, count in value.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("required generator name must be a non-empty string")
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise ValueError(f"required count for {name} must be a non-negative int")
+        normalized[name] = count
+    return normalized
+
+
+def _generator_coverage(
+    ledger: list[dict[str, Any]],
+    *,
+    split: str,
+    required: dict[str, int],
+) -> dict[str, Any]:
+    actual: dict[str, int] = {}
+    groups: dict[str, set[str]] = {}
+    for row in ledger:
+        if row.get("split") != split:
+            continue
+        name = row.get("generator")
+        key = str(name) if isinstance(name, str) and name else "unknown"
+        group = row.get("source_group")
+        if isinstance(group, str) and group:
+            groups.setdefault(key, set()).add(group)
+    actual = {key: len(members) for key, members in sorted(groups.items())}
+    details = {
+        name: {
+            "required": minimum,
+            "actual": actual.get(name, 0),
+            "met": actual.get(name, 0) >= minimum,
+            "status": "met"
+            if actual.get(name, 0) >= minimum
+            else "insufficient_data"
+            if actual.get(name, 0) == 0
+            else "below_minimum",
+        }
+        for name, minimum in sorted(required.items())
+    }
+    met = all(item["met"] for item in details.values())
+    if not required:
+        status: str = "not_required"
+    elif not details:
+        status = "insufficient_data"
+    elif met:
+        status = "met"
+    else:
+        status = "insufficient_data"
+    return {
+        "required": dict(sorted(required.items())),
+        "actual": actual,
+        "details": details,
+        "met": met,
+        "status": status,
     }
 
 
@@ -266,8 +376,16 @@ def run_pipeline(
     synthid: list[dict[str, Any]] | None = None,
     split: str = "evaluation",
     unit: str = "source_group",
+    required_generators: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     report = _base_report()
+    try:
+        required = _normalize_required_generators(required_generators)
+    except (ValueError, TypeError) as error:
+        report["unverified"] = [f"pipeline_input_invalid: {error}"]
+        report["adoption"]["reason"] = str(error)
+        return report
+    report["required_generators"] = dict(sorted(required.items()))
     if split != "evaluation":
         report["unverified"] = ["final_evaluation_requires_evaluation_split"]
         return report
@@ -448,10 +566,20 @@ def run_pipeline(
         fpr = evaluation["metrics"]["false_positive_rate"]
         generated = evaluation["metrics"]["generated_detection_rate"]
         fpr_upper = _metric_upper(fpr)
+        gen_lower = _metric_lower(generated)
         generated_rate = (
             generated.get("rate") if generated.get("status") == "measured" else None
         )
         real_rows = fpr.get("target_count", 0)
+        coverage = _generator_coverage(ledger, split=split, required=required)
+        report["generator_coverage"] = coverage
+        if not coverage["met"]:
+            for name in sorted(
+                key for key, item in coverage["details"].items() if not item["met"]
+            ):
+                report["unverified"].append(f"generator_group_insufficient:{name}")
+        if gen_lower["lower"] is None and generated.get("status") != "measured":
+            report["unverified"].append("generated_detection_not_measured")
         if real_rows < 3000:
             report["unverified"].append("fewer_than_3000_independent_real_images")
         if not any(row.get("generator") for row in ledger if row.get("split") == split):
@@ -468,9 +596,11 @@ def run_pipeline(
                 "numerator": generated.get("numerator"),
                 "denominator": generated.get("denominator"),
                 "rate": generated_rate,
+                "lower": gen_lower["lower"],
+                "confidence": gen_lower["confidence"],
+                "method": gen_lower["method"],
                 "target": TARGET_GENERATED_RATE,
-                "passes": generated_rate is not None
-                and generated_rate >= TARGET_GENERATED_RATE,
+                "passes": gen_lower["passes"],
                 "status": generated.get("status"),
             },
         }
@@ -497,11 +627,14 @@ def run_pipeline(
             and report["stages"]["decision"]["status"] != "invalid"
             and not synthetic
             and processing_complete
+            and coverage["met"]
         ):
             report["status"] = "achieved"
         elif (
             fpr_upper["upper"] is None
             or generated_rate is None
+            or gen_lower["lower"] is None
+            or not coverage["met"]
             or fpr.get("excluded_count", 0)
             or real_rows < 3000
             or synthetic
@@ -521,6 +654,22 @@ def run_pipeline(
         "performance_status": report["status"],
     }
     return report
+
+
+def _parse_required_generators(values: list[str]) -> dict[str, int]:
+    required: dict[str, int] = {}
+    for value in values:
+        name, separator, count = value.partition(":")
+        if not separator or not name.strip():
+            raise ValueError(f"invalid --required-generator: {value!r}")
+        try:
+            minimum = int(count)
+        except ValueError:
+            raise ValueError(f"invalid --required-generator: {value!r}") from None
+        if minimum < 0:
+            raise ValueError(f"invalid --required-generator: {value!r}")
+        required[name] = minimum
+    return required
 
 
 def _write_report(path: Path, report: dict[str, Any]) -> None:
@@ -565,9 +714,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--unit", choices=("image", "source_group"), default="source_group"
     )
+    parser.add_argument(
+        "--required-generator",
+        action="append",
+        default=[],
+        metavar="NAME:COUNT",
+        help="必須生成器群の最小独立元画像数（例: gpt-image:30）。繰り返し指定可。",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        required_generators = _parse_required_generators(args.required_generator)
         ledger = read_ledger(args.ledger)
         config = json.loads(args.decision_config.read_text(encoding="utf-8"))
         effective_ledger = ledger
@@ -618,6 +775,7 @@ def main(argv: list[str] | None = None) -> int:
             synthid=synthid,
             split=args.split,
             unit=args.unit,
+            required_generators=required_generators,
         )
         _write_report(args.output, report)
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:

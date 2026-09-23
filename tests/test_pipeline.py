@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 
 from detecter.calibration import TARGETS, config_id_for
-from detecter.pipeline import main, one_sided_upper_bound, run_pipeline
+from detecter.pipeline import (
+    main,
+    one_sided_lower_bound,
+    one_sided_upper_bound,
+    run_pipeline,
+)
 
 CONDITION = {
     "model": "ufd",
@@ -127,7 +132,8 @@ class PipelineTests(unittest.TestCase):
         self.assertGreater(one_sided_upper_bound(1, 4500), 0.001)
 
     def test_synthetic_final_evaluation_is_achieved_only_with_enough_evidence(self):
-        ledger = rows(real=3000, generated=10)
+        # 30/30全検出で片側95%下限が約0.905となり90%目標を満たす。
+        ledger = rows(real=3000, generated=30)
         measurements, decisions = records(ledger)
         for row in ledger[:3000]:
             decisions[ledger.index(row)]["state"] = "no_ai_signal_detected"
@@ -142,7 +148,83 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(report["status"], "achieved")
         self.assertTrue(report["criteria"]["false_positive_upper_bound"]["passes"])
+        self.assertTrue(report["criteria"]["generated_detection_rate"]["passes"])
+        self.assertGreaterEqual(
+            report["criteria"]["generated_detection_rate"]["lower"], 0.9
+        )
+        self.assertEqual(
+            report["criteria"]["generated_detection_rate"]["method"],
+            "clopper_pearson_one_sided",
+        )
         self.assertEqual(report["stages"]["comparison"]["status"], "ok")
+
+    def test_point_estimate_above_target_but_lower_below_is_not_met(self):
+        # 点推定値90%でも信頼下限が90%未満なら達成にしない。
+        ledger = rows(real=3000, generated=10)
+        measurements, decisions = records(ledger)
+        for row in ledger[:3000]:
+            decisions[ledger.index(row)]["state"] = "no_ai_signal_detected"
+        for row in ledger[3000 + 9 :]:
+            decisions[ledger.index(row)]["state"] = "no_ai_signal_detected"
+        comparisons, conditions = processing(ledger)
+        report = run_pipeline(
+            ledger,
+            config(),
+            measurements=measurements,
+            decisions=decisions,
+            comparisons=comparisons,
+            derived_conditions=conditions,
+        )
+        criterion = report["criteria"]["generated_detection_rate"]
+        self.assertEqual(criterion["numerator"], 9)
+        self.assertEqual(criterion["denominator"], 10)
+        self.assertEqual(criterion["rate"], 0.9)
+        self.assertLess(criterion["lower"], 0.9)
+        self.assertFalse(criterion["passes"])
+        self.assertEqual(report["status"], "not_met")
+
+    def test_unmet_required_generator_group_is_insufficient_evidence(self):
+        ledger = rows(real=3000, generated=30)
+        for index, row in enumerate(ledger[3000:]):
+            row["generator"] = "gen-a" if index < 29 else "gen-b"
+        measurements, decisions = records(ledger)
+        for row in ledger[:3000]:
+            decisions[ledger.index(row)]["state"] = "no_ai_signal_detected"
+        comparisons, conditions = processing(ledger)
+        report = run_pipeline(
+            ledger,
+            config(),
+            measurements=measurements,
+            decisions=decisions,
+            comparisons=comparisons,
+            derived_conditions=conditions,
+            required_generators={"gen-a": 29, "gen-b": 2},
+        )
+        self.assertEqual(report["status"], "insufficient_evidence")
+        self.assertIn("generator_group_insufficient:gen-b", report["unverified"])
+        self.assertFalse(report["generator_coverage"]["met"])
+        met = run_pipeline(
+            ledger,
+            config(),
+            measurements=measurements,
+            decisions=decisions,
+            comparisons=comparisons,
+            derived_conditions=conditions,
+            required_generators={"gen-a": 29, "gen-b": 1},
+        )
+        self.assertEqual(met["status"], "achieved")
+        self.assertTrue(met["generator_coverage"]["met"])
+
+    def test_lower_bound_helpers(self):
+        self.assertIsNone(one_sided_lower_bound(0, 0))
+        self.assertEqual(one_sided_lower_bound(0, 5), 0.0)
+        self.assertAlmostEqual(one_sided_lower_bound(30, 30), 0.9049661, places=6)
+        self.assertGreater(one_sided_lower_bound(29, 29), 0.9)
+        self.assertLess(one_sided_lower_bound(10, 10), 0.9)
+        with self.assertRaises(ValueError):
+            one_sided_lower_bound(6, 5)
+        with self.assertRaises(ValueError):
+            one_sided_lower_bound(-1, 5)
 
     def test_missing_measurements_is_evidence_insufficient(self):
         report = run_pipeline(rows(real=2, generated=1), config())
