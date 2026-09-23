@@ -136,6 +136,7 @@ class DecisionCliTests(unittest.TestCase):
                     "c2pa_ai_evidence_with_low_classifier_score",
                     decision["reasons"],
                 )
+                self.assertEqual(decision["hold_reasons"], [])
 
     def test_unconfirmed_disclosure_does_not_override_low_score(self):
         record = {

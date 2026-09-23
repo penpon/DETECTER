@@ -23,6 +23,7 @@ UFDの低スコアは実写の証明になりません。C2PAの未信頼、確�
 信頼済みで画像に結び付いたAI生成根拠があるのに分類器スコアが低い場合は、
 `decision.state` を `no_ai_signal_detected` にせず `ai_likely` とし、
 `reasons` に `c2pa_ai_evidence_with_low_classifier_score` を残します。
+この根拠の食い違いは保留状態ではないため `hold_reasons` には含めません。
 
 `--decision-usage evaluation`（既定）は候補設定を評価へ適用できます。
 `--decision-usage production` は `status: validated` かつ `usage: production` の設定だけを許可します。

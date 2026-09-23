@@ -58,7 +58,7 @@ uv run python -m detecter.c2pa_provenance image.jpg \
 C2PA 2.4の `c2pa.ai-disclosure` も対象マニフェストからのみ読み、
 `ai_disclosure`（`model_type`、`model_name`、`model_identifier`、
 `human_oversight_level`、`scientific_domain`）と
-`ai_disclosure_assertion`（開示の有無）として既存のアクション情報と
+`ai_disclosure_assertion`（有効な形式として解析できた開示の有無）として既存のアクション情報と
 ともに保存します。署名の有効性、署名者の信頼、画像との一致、
 全体生成／部分編集は別々の項目に残し、開示の有無で上書きしません。
 未信頼、未検証、画像との結び付きが不明な主張は確認済みのAI生成根拠にしません。

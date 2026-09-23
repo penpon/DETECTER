@@ -272,7 +272,7 @@ def apply_decision(
         "generation_scope": provenance.get("generation_scope", "unknown"),
         "reasons": sorted(set(reasons)),
     }
-    result["hold_reasons"] = result["reasons"]
+    result["hold_reasons"] = result["reasons"] if state == "inconclusive" else []
     return result
 
 
