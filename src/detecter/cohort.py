@@ -12,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from .core import ensure_heif_opener, inspect_image
 from .ledger import split_ledger
 from .pipeline import _generator_coverage
@@ -34,7 +36,11 @@ REQUIRED_SOURCE_FIELDS = ("root", "label", "source", "license", "id_prefix")
 def _inspect_candidate(path: Path, require_camera: bool) -> dict[str, Any] | None:
     try:
         media = inspect_image(path)
-        make, model = _camera_of(path)
+        with Image.open(path) as image:
+            exif = image.getexif()
+            make = str(exif.get(271) or "").strip()
+            model = str(exif.get(272) or "").strip()
+            perceptual_hash = _perceptual_hash(image)
     except (OSError, ValueError):
         return None
     if require_camera and not model:
@@ -47,7 +53,21 @@ def _inspect_candidate(path: Path, require_camera: bool) -> dict[str, Any] | Non
         "height": media["height"],
         "make": make,
         "model": model,
+        "perceptual_hash": perceptual_hash,
     }
+
+
+def _perceptual_hash(image: Image.Image) -> str:
+    """Return a 64-bit difference hash for original-photo grouping."""
+    small = image.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
+    pixels = list(small.getdata())
+    bits = 0
+    for row in range(8):
+        for column in range(8):
+            bits = (bits << 1) | int(
+                pixels[row * 9 + column] > pixels[row * 9 + column + 1]
+            )
+    return f"{bits:016x}"
 
 
 def scan_directory(
@@ -99,16 +119,6 @@ def scan_directory(
     return rows
 
 
-def _camera_of(path: Path) -> tuple[str, str]:
-    from PIL import Image
-
-    with Image.open(path) as image:
-        exif = image.getexif()
-        make = str(exif.get(271) or "").strip()
-        model = str(exif.get(272) or "").strip()
-    return make, model
-
-
 def read_inventory(path: Path | str) -> list[dict[str, Any]]:
     return [
         json.loads(line)
@@ -141,10 +151,13 @@ def _source_rows(
             reasons["duplicate"] += 1
             continue
         seen_hashes.add(item["sha256"])
+        # The group key is independent of the source entry so that the same
+        # photo inventoried twice is never split across tuning and evaluation.
+        group_key = item.get("perceptual_hash") or item["sha256"][:16]
         row: dict[str, Any] = {
             "image_id": f"{entry['id_prefix']}-{index:04d}",
             "path": item["path"],
-            "source_group": f"{entry['id_prefix']}-{index:04d}",
+            "source_group": f"g{group_key}",
             "sha256": item["sha256"],
             "source": entry["source"],
             "license": entry["license"],

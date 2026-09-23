@@ -67,6 +67,10 @@ uv run python -m detecter.cohort report \
 }
 ```
 
+元画像グループは、同じ写真を別形式や別品質で保存した複製を分割しないよう、
+目録の知覚ハッシュ（64ビットのdHash）でまとめます。同じ写真が調整用と最終評価用へ
+分かれる漏洩を防ぐため、分割は元画像グループ単位で行います。
+
 `label`は`real`、`generated`、`edited`です。`real`はEXIFの撮影機器が必須で、
 `camera`に`Make Model`を記録します。`generated`と`edited`は`generator`が必須で、
 `edited`は加工履歴（`history`）も必須です。`provenance`を指定すると、
@@ -112,7 +116,7 @@ uv run python -m detecter.cohort report \
 
 | 対象 | 件数 | 分割 |
 | --- | --- | --- |
-| 実写（`/Volumes/Multimedia/iphone`） | 3,620件 | 最終評価3,103元画像グループ、調整517元画像グループ |
+| 実写（`/Volumes/Multimedia/iphone`） | 5,895件 | 最終評価5,085件・3,752元画像グループ、調整810件・625元画像グループ |
 | GPT Image 2.5（評価専用） | 29件 | 最終評価 |
 | Nano Banana Pro（評価専用） | 29件 | 最終評価 |
 | GPT Image 2（調整専用） | 12件 | 調整 |
@@ -120,8 +124,10 @@ uv run python -m detecter.cohort report \
 | Nano Banana Proによる部分編集 | 18件 | 最終評価 |
 | JPEG品質と縮小の加工版 | 200件（実写20＋生成20に5条件） | 元画像と同じ分割 |
 
-撮影機器は12種類（iPhone XS、iPhone 11 Pro、iPhone 13、SONY ILCE-6400など）、
-入力形式はJPEG 3,600件、HEIF 120件、PNG 200件です。
+撮影機器は14種類（iPhone XS、iPhone 11 Pro、iPhone 13、SONY ILCE-7M3、
+Canon EOS R3など）、入力形式はJPEG 5,387件、HEIF 508件、PNG 200件です。
+同じ写真を別形式・別品質で保存した複製は知覚ハッシュで1グループへまとめるため、
+元画像グループ数はファイル数より少なくなります。
 台帳は`/Users/nana/workspace/detecter-cohort/ledger/cohort-final-ledger.jsonl`に置き、
 `detecter.ledger validate`で画像ハッシュを再確認できます。
 Midjourneyは対象外のため、`requirements.out_of_scope`へ記録しています。

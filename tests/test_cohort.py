@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,13 +21,31 @@ from detecter.cohort import (
 
 
 def make_photo(
-    path: Path, *, model: str = "", make: str = "Apple", size: tuple[int, int] = (8, 8)
+    path: Path,
+    *,
+    model: str = "",
+    make: str = "Apple",
+    size: tuple[int, int] = (8, 8),
+    image: Image.Image | None = None,
+    format: str | None = None,
 ) -> None:
     exif = Image.Exif()
     if model:
         exif[271] = make
         exif[272] = model
-    Image.new("RGB", size, "gray").save(path, exif=exif)
+    if image is None:
+        image = Image.new("RGB", size)
+        pixels = image.load()
+        assert pixels is not None
+        rng = random.Random(str(size))
+        for x in range(size[0]):
+            for y in range(size[1]):
+                pixels[x, y] = (
+                    rng.randrange(256),
+                    rng.randrange(256),
+                    rng.randrange(256),
+                )
+    image.save(path, format=format, exif=exif)
 
 
 def make_heic_photo(path: Path, *, model: str = "iPhone 13") -> None:
@@ -53,6 +72,47 @@ class CohortTests(unittest.TestCase):
             self.assertEqual(rows[0]["model"], "iPhone 13")
             self.assertEqual(rows[0]["format"], "JPEG")
             self.assertEqual(len(rows[0]["sha256"]), 64)
+
+    def test_same_photo_in_two_encodings_shares_one_source_group(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            images = root / "images"
+            images.mkdir()
+            rng = random.Random("photo")
+            levels = [
+                [rng.choice((30, 90, 150, 210, 250)) for _ in range(8)]
+                for _ in range(8)
+            ]
+            photo = Image.new("RGB", (64, 48))
+            pixels = photo.load()
+            assert pixels is not None
+            for x in range(64):
+                for y in range(48):
+                    value = levels[y // 6][x // 8]
+                    pixels[x, y] = (value, value, value)
+            other = Image.new("RGB", (64, 48), "white")
+            make_photo(images / "a.png", model="iPhone 13", image=photo)
+            make_photo(images / "b.jpg", model="iPhone 13", image=photo)
+            make_photo(images / "c.jpg", model="iPhone 13", image=other)
+            value = manifest(
+                [
+                    {
+                        "root": str(images),
+                        "label": "real",
+                        "source": "所有者による撮影",
+                        "license": "評価利用のみ",
+                        "id_prefix": "real",
+                        "inventory": str(_inventory(images, root, "images.jsonl")),
+                    }
+                ],
+                {"minimum_real_groups": 1},
+            )
+            rows, _ = build_ledger(value, base=root)
+            groups = {Path(row["path"]).name: row["source_group"] for row in rows}
+            self.assertEqual(len(rows), 3)
+            self.assertEqual(groups["a.png"], groups["b.jpg"])
+            self.assertNotEqual(groups["a.png"], groups["c.jpg"])
+            self.assertEqual(len({row["source_group"] for row in rows}), 2)
 
     def test_scan_directory_can_limit_the_formats(self):
         with tempfile.TemporaryDirectory() as temporary:
