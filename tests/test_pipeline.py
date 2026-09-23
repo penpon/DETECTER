@@ -318,6 +318,10 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(report["status"], "insufficient_evidence")
         self.assertEqual(report["stages"]["comparison"]["status"], "insufficient")
+        generated = report["criteria"]["generated_detection_rate"]
+        self.assertEqual((generated["numerator"], generated["denominator"]), (10, 10))
+        self.assertEqual(generated["confidence"], 0.95)
+        self.assertEqual(generated["method"], "clopper_pearson_one_sided")
 
     def test_mixed_synthetic_and_verified_rows_cannot_prove_performance(self):
         ledger = rows(real=3000, generated=10)

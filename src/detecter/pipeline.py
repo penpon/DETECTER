@@ -548,20 +548,7 @@ def run_pipeline(
         if evaluation is not None
         else {"status": "insufficient", "reason": "evaluation_records_invalid"}
     )
-
-    processing_complete = (
-        report["stages"]["preprocessing"]["status"] == "ok"
-        and report["stages"]["comparison"]["status"] == "ok"
-    )
-    if (
-        evaluation is None
-        or not ids
-        or leakage
-        or shape_reasons
-        or not processing_complete
-    ):
-        report["status"] = "insufficient_evidence"
-    else:
+    if evaluation is not None:
         fpr = evaluation["metrics"]["false_positive_rate"]
         generated = evaluation["metrics"]["generated_detection_rate"]
         fpr_upper = _metric_upper(fpr)
@@ -570,26 +557,6 @@ def run_pipeline(
             generated.get("rate") if generated.get("status") == "measured" else None
         )
         real_rows = fpr.get("target_count", 0)
-        if gen_lower["lower"] is None and generated.get("status") != "measured":
-            report["unverified"].append("generated_detection_not_measured")
-        if real_rows < 3000:
-            report["unverified"].append("fewer_than_3000_independent_real_images")
-        if not any(
-            row.get("generator")
-            for row in ledger
-            if row.get("split") == split and row.get("label") == "generated"
-        ):
-            report["unverified"].append("generator_breakdown_not_provided")
-        if not any(
-            row.get("camera")
-            for row in ledger
-            if row.get("split") == split and row.get("label") == "real"
-        ):
-            report["unverified"].append("camera_breakdown_not_provided")
-        if not any(
-            row.get("label") == "edited" for row in ledger if row.get("split") == split
-        ):
-            report["unverified"].append("partial_edit_scope_not_evaluated")
         report["criteria"] = {
             "false_positive_upper_bound": fpr_upper,
             "generated_detection_rate": {
@@ -610,6 +577,40 @@ def run_pipeline(
             "upper_bound": one_sided_upper_bound(0, 3000),
             "target": TARGET_FPR_UPPER,
         }
+
+    processing_complete = (
+        report["stages"]["preprocessing"]["status"] == "ok"
+        and report["stages"]["comparison"]["status"] == "ok"
+    )
+    if (
+        evaluation is None
+        or not ids
+        or leakage
+        or shape_reasons
+        or not processing_complete
+    ):
+        report["status"] = "insufficient_evidence"
+    else:
+        if gen_lower["lower"] is None and generated.get("status") != "measured":
+            report["unverified"].append("generated_detection_not_measured")
+        if real_rows < 3000:
+            report["unverified"].append("fewer_than_3000_independent_real_images")
+        if not any(
+            row.get("generator")
+            for row in ledger
+            if row.get("split") == split and row.get("label") == "generated"
+        ):
+            report["unverified"].append("generator_breakdown_not_provided")
+        if not any(
+            row.get("camera")
+            for row in ledger
+            if row.get("split") == split and row.get("label") == "real"
+        ):
+            report["unverified"].append("camera_breakdown_not_provided")
+        if not any(
+            row.get("label") == "edited" for row in ledger if row.get("split") == split
+        ):
+            report["unverified"].append("partial_edit_scope_not_evaluated")
         synthetic = any(
             str(row.get("source", "")).lower().startswith("synthetic")
             for row in ledger
