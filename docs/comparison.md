@@ -12,7 +12,7 @@ uv run --extra community-forensics --extra cure python -m detecter.comparison co
   --ledger data/ledger.jsonl --output results/model-comparison.jsonl
 ```
 
-Issue #11のCLI統合後は `uv run --extra community-forensics --extra cure detecter compare` に同じ引数を指定します。
+共通CLIは `uv run --extra community-forensics --extra cure detecter compare` で実行できます。
 元ファイルの同一ID・ハッシュ集合を各モデルへ渡し、画像1枚ごとに独立した2行
 （CuReありは3行）を保存します。
 一方が失敗しても、もう一方の計測は続けます。失敗理由、期待したハッシュ、実際のハッシュを保存します。
