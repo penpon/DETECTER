@@ -64,9 +64,9 @@ def compare_records(
     for row in sorted(inputs, key=lambda r: r["image_id"]):
         path = Path(row["path"])
         identity = {"image_id": row["image_id"], "expected_sha256": row["sha256"]}
-        pair = []
+        measurements = []
         if "community-forensics" in selected:
-            pair.append(
+            measurements.append(
                 cf.measure(
                     path,
                     **identity,
@@ -77,7 +77,7 @@ def compare_records(
                 )
             )
         if "ufd" in selected:
-            pair.append(
+            measurements.append(
                 measure(
                     path,
                     **identity,
@@ -87,7 +87,7 @@ def compare_records(
                 )
             )
         if "cure" in selected:
-            pair.append(
+            measurements.append(
                 cure_mod.measure(
                     path,
                     **identity,
@@ -99,7 +99,7 @@ def compare_records(
                     base_checkpoint=base_checkpoint,
                 )
             )
-        for record in pair:
+        for record in measurements:
             record.update(
                 source_image_id=row.get("source_image_id", row["image_id"]),
                 source_sha256=row.get("source_sha256", row["sha256"]),

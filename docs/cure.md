@@ -25,9 +25,11 @@ CuReを追加しても既定の判定設定や既定モデルは変わりませ�
 - 公式ソース: `manic-cui/CuRe`の`8f7832c83dcd3f4f89de955103e94a64ddc3cdc9`。
 - 公式適合重み: 同リポジトリ`weights/cure_adapter.pt`の上記コミット版。
 - 重みSHA-256: `17cabb334563c15abc8827db87dc272a4aef10f4279025faee1ef8d32c444ae1`。
-- 基盤モデル: `facebook/PE-Core-L14-336`の`PE-Core-L14-336.pt`（約2.7GB）。
-  `huggingface_hub`が取得し、到達できない場合は`--base-checkpoint`で
-  事前取得したファイルを指定します。
+- 基盤モデル: `facebook/PE-Core-L14-336`の`PE-Core-L14-336.pt`（約2.7GB）、
+  revision `bafb0f76541d399057e980a25947f67acec76575`、SHA-256
+  `0cdab5b338cbaa1e7a5dcd1b2fb4c9f4d5df1abd289564658edbab64a650e7e8`。
+  `huggingface_hub`が指定revisionを取得します。到達できない場合は
+  `--base-checkpoint`で同じハッシュの事前取得済みファイルを指定します。
 - モデル構造: PE Core L/14視覚塔（336画素固定）にQ/V LoRA、
   128次元の応答部分空間、2出力の線形分類器。
 - 前処理: RGB変換、PNGはJPEG品質96で再圧縮、最短辺390への3次補間、

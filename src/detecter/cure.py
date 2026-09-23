@@ -28,6 +28,8 @@ ADAPTER_URL = (
 )
 BASE_REPO_ID = "facebook/PE-Core-L14-336"
 BASE_FILENAME = "PE-Core-L14-336.pt"
+BASE_REVISION = "bafb0f76541d399057e980a25947f67acec76575"
+BASE_SHA256 = "0cdab5b338cbaa1e7a5dcd1b2fb4c9f4d5df1abd289564658edbab64a650e7e8"
 ARCHITECTURE = "pe-core-l14-336 visual tower + qv-lora-r64 + subspace-128 + linear-2"
 PREPROCESSING = {
     "color_mode": "RGB",
@@ -241,17 +243,31 @@ def adapter_path(
     return path
 
 
-def _resolve_base_checkpoint(base_checkpoint: Path | None = None) -> Path:
+def _resolve_base_checkpoint(
+    base_checkpoint: Path | None = None, *, cache_dir: Path | None = None
+) -> Path:
     if base_checkpoint is not None:
         path = Path(base_checkpoint).expanduser()
         if not path.is_file():
             raise ValueError(f"基盤モデルが見つかりません: {path}")
-        return path
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as error:
-        raise RuntimeError("uv sync --extra cure を実行してください") from error
-    return Path(hf_hub_download(BASE_REPO_ID, BASE_FILENAME))
+    else:
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as error:
+            raise RuntimeError("uv sync --extra cure を実行してください") from error
+        path = Path(
+            hf_hub_download(
+                BASE_REPO_ID,
+                BASE_FILENAME,
+                revision=BASE_REVISION,
+                cache_dir=str(
+                    (cache_dir or default_cache_dir()) / MODEL / SOURCE_COMMIT
+                ),
+            )
+        )
+    if file_sha256(path) != BASE_SHA256:
+        raise ValueError(f"CuRe基盤重みのSHA-256が一致しません: {path}")
+    return path
 
 
 def load_model(
@@ -268,8 +284,9 @@ def load_model(
         raise RuntimeError("CUDAを利用できません")
     model = CuRe().float()
     expected = set(model.state_dict())
+    base_path = _resolve_base_checkpoint(base_checkpoint, cache_dir=cache_dir)
     base_state = torch.load(
-        _resolve_base_checkpoint(base_checkpoint),
+        base_path,
         map_location="cpu",
         weights_only=True,
     )
@@ -352,7 +369,8 @@ def measure(
         "model_version": SOURCE_COMMIT,
         "weights_version": (
             f"{SOURCE_COMMIT}:sha256:{ADAPTER_SHA256}"
-            f"+base:{BASE_REPO_ID}/{BASE_FILENAME}"
+            f"+base:{BASE_REPO_ID}/{BASE_FILENAME}@{BASE_REVISION}"
+            f":sha256:{BASE_SHA256}"
         ),
         "preprocessing_version": PREPROCESSING_VERSION,
         "preprocessing": dict(PREPROCESSING),
@@ -360,12 +378,15 @@ def measure(
             "python": platform.python_version(),
             "platform": platform.platform(),
             "device": device,
+            "cuda_runtime": torch.version.cuda,
             "libraries": libraries,
         },
         "status": "error",
         "raw_score": None,
         "error": None,
     }
+    if device == "cuda" and torch.cuda.is_available():
+        record["environment"]["accelerator"] = torch.cuda.get_device_name(device)
     try:
         actual_hash = file_sha256(path)
         record["observed_sha256"] = actual_hash

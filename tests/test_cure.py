@@ -12,7 +12,16 @@ from unittest.mock import patch
 from PIL import Image
 
 from detecter.core import file_sha256
-from detecter.cure import ADAPTER_SHA256, MODEL, SOURCE_COMMIT, main
+from detecter.cure import (
+    ADAPTER_SHA256,
+    BASE_FILENAME,
+    BASE_REPO_ID,
+    BASE_REVISION,
+    BASE_SHA256,
+    MODEL,
+    SOURCE_COMMIT,
+    main,
+)
 
 
 class CureTests(unittest.TestCase):
@@ -39,6 +48,8 @@ class CureTests(unittest.TestCase):
             self.assertEqual(record["environment"]["device"], "cpu")
             self.assertEqual(record["model_version"], SOURCE_COMMIT)
             self.assertIn(ADAPTER_SHA256, record["weights_version"])
+            self.assertIn(BASE_REVISION, record["weights_version"])
+            self.assertIn(BASE_SHA256, record["weights_version"])
             self.assertTrue(record["preprocessing_version"])
             self.assertEqual(record["preprocessing"]["resize"], [336, 336])
             for key in ("label", "split", "verdict", "probability", "prediction"):
@@ -101,6 +112,46 @@ class CureTests(unittest.TestCase):
                 first.write_bytes(b"corrupted")
                 with self.assertRaisesRegex(ValueError, "SHA-256"):
                     adapter_path(cache)
+
+    def test_base_checkpoint_is_pinned_hashed_and_uses_configured_cache(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        from detecter.cure import _resolve_base_checkpoint
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            checkpoint = root / "base.pt"
+            checkpoint.touch()
+            cache = root / "cache"
+            download = Mock(return_value=checkpoint)
+            with (
+                patch("detecter.cure.file_sha256", return_value=BASE_SHA256),
+                patch.dict(
+                    "sys.modules",
+                    {"huggingface_hub": SimpleNamespace(hf_hub_download=download)},
+                ),
+            ):
+                resolved = _resolve_base_checkpoint(cache_dir=cache)
+            self.assertEqual(resolved, checkpoint)
+            download.assert_called_once_with(
+                BASE_REPO_ID,
+                BASE_FILENAME,
+                revision=BASE_REVISION,
+                cache_dir=str(cache / MODEL / SOURCE_COMMIT),
+            )
+
+    def test_base_checkpoint_rejects_an_unpinned_hash(self):
+        from detecter.cure import _resolve_base_checkpoint
+
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint = Path(temporary) / "base.pt"
+            checkpoint.touch()
+            with (
+                patch("detecter.cure.file_sha256", return_value="0" * 64),
+                self.assertRaisesRegex(ValueError, "基盤重みのSHA-256"),
+            ):
+                _resolve_base_checkpoint(checkpoint)
 
     def test_comparison_adds_cure_without_combining_scores(self):
         from detecter.comparison import compare_records
