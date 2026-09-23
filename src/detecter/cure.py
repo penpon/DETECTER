@@ -419,7 +419,10 @@ def measure(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="CuRe (Apache-2.0) のCPU既定計測。CUDAも指定できます。スコアは確率ではありません。"
+        description=(
+            "CuRe (Apache-2.0) のCPU既定計測。CUDAも指定できます。"
+            "raw_scoreは生成クラス確率で、判定の正しさの確率ではありません。"
+        )
     )
     parser.add_argument("image", type=Path)
     parser.add_argument("--image-id")

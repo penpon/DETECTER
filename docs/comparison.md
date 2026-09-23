@@ -12,10 +12,10 @@ uv run --extra community-forensics --extra cure python -m detecter.comparison co
   --ledger data/ledger.jsonl --output results/model-comparison.jsonl
 ```
 
-共通CLIは `uv run --extra community-forensics --extra cure detecter compare` で実行できます。
-元ファイルの同一ID・ハッシュ集合を各モデルへ渡し、画像1枚ごとに独立した2行
-（CuReありは3行）を保存します。
-一方が失敗しても、もう一方の計測は続けます。失敗理由、期待したハッシュ、実際のハッシュを保存します。
+共通CLIは `uv run --extra community-forensics --extra cure detecter compare community-forensics ufd cure --ledger data/ledger.jsonl --output results/model-comparison.jsonl` で実行できます。
+元ファイルの同一ID・ハッシュ集合を各モデルへ渡し、画像ごとに各モデルの独立記録を保存します
+（既定の2モデルなら2行、CuReを含む場合は3行）。
+1モデルが失敗しても他モデルの計測を続け、失敗理由、期待ハッシュ、実際のハッシュを保存します。
 画像を読めない場合でも期待した画像ID・ハッシュを保持します。
 
 画像IDで順序を固定します。各モデルを1回読み込み、画像ごとの再読込を避けます。
@@ -24,5 +24,5 @@ Community ForensicsはCPU、UFDは `--device`、CuReは `--cure-device` で選�
 モデル版、重み版、前処理版、機器・ライブラリの版、派生元ID・ハッシュ、加工履歴を保存します。
 推論関数へ正解ラベル、分割先、生成器、撮影機器を渡しません。
 スコア平均、多数決、統合判定は作りません。後続の評価ではモデルごとに記録を選択してください。
-出力は新規ファイルだけに保存します。どちらか1件でも失敗した場合、終了コードは1です。
+出力は新規ファイルだけに保存します。1モデルでも失敗した場合、終了コードは1です。
 CuReを指定しない従来の2件比較の出力は変わりません。

@@ -14,8 +14,8 @@ uv run --extra cure python -m detecter.cure image.jpg --image-id image-001 --dev
 共通CLIへの接続は `detecter cure` です。同じ引数を
 `uv run --extra cure detecter cure`に指定できます。
 `--output measurement.json`で保存先を指定できます。成功時は終了コード0、
-失敗時は終了コード1です。画像が存在する場合、失敗記録にも画像のハッシュを残します。
-画像自体を読めない場合は`sha256: null`です。
+失敗時は終了コード1です。画像のバイト列を読める場合は、形式や重みのエラーでも失敗記録に画像のハッシュを残します。
+バイト列を読めずハッシュを計算できない場合だけ`sha256: null`です。
 
 `raw_score`は公式推論の生成確率（2出力のソフトマックス）です。
 スコアは正しさの確率ではありません。判定境界、正解ラベル、評価分割を推論に渡しません。
