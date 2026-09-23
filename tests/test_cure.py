@@ -55,7 +55,10 @@ class CureTests(unittest.TestCase):
             self.assertIn(ADAPTER_SHA256, record["weights_version"])
             self.assertIn(BASE_REVISION, record["weights_version"])
             self.assertIn(BASE_SHA256, record["weights_version"])
-            self.assertTrue(record["preprocessing_version"].endswith("cure-336-rgb-v2"))
+            self.assertTrue(
+                record["preprocessing_version"].endswith("cure-336-rgb-exif-v3")
+            )
+            self.assertTrue(record["preprocessing"]["exif_transpose"])
             self.assertEqual(record["preprocessing"]["resize"], [336, 336])
             self.assertEqual(
                 record["preprocessing"]["png_recompress"]["when"],
@@ -141,6 +144,22 @@ class CureTests(unittest.TestCase):
                 preprocess_image(disguised_png)
                 preprocess_image(disguised_jpeg)
             self.assertEqual(qualities, [96])
+
+    def test_preprocess_image_uses_exif_transposed_pixels(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "rotated.jpg"
+            exif = Image.Exif()
+            exif[274] = 6
+            Image.new("RGB", (16, 8), "white").save(path, exif=exif)
+            seen = []
+
+            def capture(image):
+                seen.append(image.size)
+
+            with patch("detecter.cure.preprocess", side_effect=capture):
+                preprocess_image(path)
+                preprocess_image(path, image_format="JPEG")
+            self.assertEqual(seen, [(8, 16), (8, 16)])
 
     def test_preprocessing_records_do_not_share_nested_configuration(self):
         from detecter.cure import measure
