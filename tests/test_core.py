@@ -72,7 +72,7 @@ class CoreTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 exit_code = main(
                     [
-                        "analyze",
+                        "analyze-legacy",
                         str(image),
                         "--skip-ufd",
                         "--output",
@@ -90,7 +90,7 @@ class CoreTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             exit_code = main(
                 [
-                    "analyze",
+                    "analyze-legacy",
                     "missing.png",
                     "--jev-compare",
                     "--skip-ufd",

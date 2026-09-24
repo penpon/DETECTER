@@ -6,7 +6,7 @@ C2PA（画像に埋め込まれた来歴情報の規格）の検査では、署�
 既存の解析コマンドでも、`c2pa` に確認状態と保留理由が追加されます。
 
 ```sh
-uv run detecter analyze image.jpg --skip-ufd --c2pa-trust-anchors anchors.pem --output -
+uv run detecter analyze-legacy image.jpg --skip-ufd --c2pa-trust-anchors anchors.pem --output -
 ```
 
 独立した検査では、評価台帳の画像IDとファイル全体のSHA-256ハッシュを記録できます。

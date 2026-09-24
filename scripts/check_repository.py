@@ -51,7 +51,7 @@ def main() -> None:
                 sys.executable,
                 "-m",
                 "detecter.cli",
-                "analyze",
+                "analyze-legacy",
                 str(image),
                 "--skip-ufd",
                 "--output",

@@ -67,7 +67,7 @@ uv run python -m detecter.synthid_manual add \
 未検出から実写や他社AIの否定は導きません。
 
 ```sh
-uv run detecter analyze image.jpg --skip-ufd \
+uv run detecter analyze-legacy image.jpg --skip-ufd \
   --synthid-manual results/synthid-manual.jsonl --output -
 ```
 

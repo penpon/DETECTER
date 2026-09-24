@@ -196,7 +196,7 @@ class DecisionCliTests(unittest.TestCase):
             ):
                 code = main(
                     [
-                        "analyze",
+                        "analyze-legacy",
                         str(image),
                         "--decision-config",
                         str(config),
@@ -224,7 +224,7 @@ class DecisionCliTests(unittest.TestCase):
             with redirect_stdout(output):
                 code = main(
                     [
-                        "analyze",
+                        "analyze-legacy",
                         str(image),
                         "--decision-config",
                         str(config),
@@ -246,7 +246,7 @@ class DecisionCliTests(unittest.TestCase):
             with redirect_stdout(output):
                 code = main(
                     [
-                        "analyze",
+                        "analyze-legacy",
                         str(image),
                         "--decision-config",
                         str(image.with_name("missing.json")),
