@@ -132,6 +132,7 @@ def _source_rows(
     inventory: list[dict[str, Any]],
     *,
     seen_hashes: set[str],
+    allow_missing_camera: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     label = entry["label"]
     if label not in {"real", "generated", "edited"}:
@@ -169,8 +170,11 @@ def _source_rows(
         if label == "real":
             camera = " ".join(value for value in (item["make"], item["model"]) if value)
             if not camera:
-                reasons["camera_missing"] += 1
-                continue
+                if not allow_missing_camera:
+                    reasons["camera_missing"] += 1
+                    continue
+                reasons["camera_unknown"] += 1
+                camera = "unknown"
             row["camera"] = camera
         else:
             row["generator"] = generator
@@ -194,6 +198,7 @@ def build_ledger(
     base: Path,
     seed: int | None = None,
     evaluation_fraction: float = 0.2,
+    allow_missing_camera: bool = False,
 ) -> tuple[list[dict], dict]:
     """Turn inventoried local images into ledger rows plus a build report."""
     sources = manifest.get("sources")
@@ -210,7 +215,10 @@ def build_ledger(
         if not inventory_path.is_absolute():
             inventory_path = base / inventory_path
         inventory = read_inventory(inventory_path)
-        selected, reasons = _source_rows(entry, inventory, seen_hashes=seen_hashes)
+        allowed = allow_missing_camera or bool(entry.get("allow_missing_camera"))
+        selected, reasons = _source_rows(
+            entry, inventory, seen_hashes=seen_hashes, allow_missing_camera=allowed
+        )
         rows.extend(selected)
         report["sources"].append(
             {
@@ -417,6 +425,7 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--ledger", type=Path, required=True)
     build.add_argument("--seed", type=int)
     build.add_argument("--evaluation-fraction", type=float, default=0.2)
+    build.add_argument("--allow-missing-camera", action="store_true")
     build.add_argument("--report", type=Path, default=Path("-"))
     report = commands.add_parser("report")
     report.add_argument("--ledger", type=Path, required=True)
@@ -459,6 +468,7 @@ def main(argv: list[str] | None = None) -> int:
                 base=args.manifest.parent,
                 seed=args.seed,
                 evaluation_fraction=args.evaluation_fraction,
+                allow_missing_camera=args.allow_missing_camera,
             )
             text = "".join(
                 json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
