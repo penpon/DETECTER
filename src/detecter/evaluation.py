@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from bisect import bisect_left
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ CONDITION_FIELDS = (
 )
 POSITIVE_STATES = {"ai_likely", "ai_evidence_confirmed"}
 DECISION_STATES = POSITIVE_STATES | {"no_ai_signal_detected", "inconclusive"}
+FPR_TARGETS = (0.01, 0.001)
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -95,6 +97,106 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "failure_rate": _metric(rows, lambda r: r["failed"]),
     }
     return result
+
+
+def _finite_score(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _group_scores(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One score per source group, matching the decision group policy.
+
+    Real groups aggregate member scores with max (any member positive means a
+    group false positive); generated and edited groups aggregate with min
+    (every member must reach the threshold for the group to count as
+    detected), so a group with an unscored member can never be detected.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[row["source_group"]].append(row)
+    result = []
+    for group, members in sorted(grouped.items()):
+        label = members[0]["label"]
+        scored = [row["raw_score"] for row in members if row["raw_score"] is not None]
+        if label == "real":
+            score = max(scored) if scored else None
+        elif len(scored) == len(members):
+            score = min(scored)
+        else:
+            score = None
+        result.append(
+            {
+                "source_group": group,
+                "label": label,
+                "image_kind": str(members[0].get("image_kind") or "unknown"),
+                "score": score,
+            }
+        )
+    return result
+
+
+def _fpr_threshold(real: list[float], allowed: int) -> float | None:
+    """Tightest threshold whose real-group false positives fit `allowed`.
+
+    `real` is sorted ascending. With `allowed` false positives the threshold
+    must sit strictly above the (allowed+1)-th largest real score, so the
+    operating point is the next representable score above it.
+    """
+    if not real:
+        return None
+    if allowed >= len(real):
+        return -math.inf
+    return math.nextafter(real[-allowed - 1], math.inf)
+
+
+def _tpr_at_fpr(groups: list[dict[str, Any]]) -> dict[str, Any]:
+    """TPR at fixed FPR targets over group-level scores."""
+    real = sorted(
+        row["score"]
+        for row in groups
+        if row["label"] == "real" and row["score"] is not None
+    )
+    positives = {
+        label: [row["score"] for row in groups if row["label"] == label]
+        for label in ("generated", "edited")
+    }
+    targets = {}
+    for fpr in FPR_TARGETS:
+        allowed = math.floor(len(real) * fpr)
+        threshold = _fpr_threshold(real, allowed)
+        false_positives = (
+            len(real) - bisect_left(real, threshold) if threshold is not None else 0
+        )
+        entry: dict[str, Any] = {
+            "fpr": fpr,
+            "allowed_false_positives": allowed,
+            "threshold": threshold,
+            "false_positives": false_positives,
+            "achieved_fpr": false_positives / len(real) if real else None,
+        }
+        for label, scores in positives.items():
+            detected = sum(
+                score is not None and threshold is not None and score >= threshold
+                for score in scores
+            )
+            entry[label] = {
+                "detected": detected,
+                "groups": len(scores),
+                "tpr": detected / len(scores) if scores else None,
+            }
+        targets[f"{fpr:g}"] = entry
+    return {
+        "status": "measured" if real else "insufficient_data",
+        "real_groups": len(real),
+        "unscored_real_groups": sum(
+            row["label"] == "real" and row["score"] is None for row in groups
+        ),
+        "targets": targets,
+    }
 
 
 def _units(rows: list[dict[str, Any]], unit: str) -> list[dict[str, Any]]:
@@ -188,11 +290,7 @@ def evaluate_records(
             reasons.append(
                 "measurement_failed" if failed else "measurement_status_invalid"
             )
-        elif (
-            isinstance(measurement.get("raw_score"), bool)
-            or not isinstance(measurement.get("raw_score"), (int, float))
-            or not math.isfinite(measurement["raw_score"])
-        ):
+        elif not _finite_score(measurement.get("raw_score")):
             reasons.append("score_invalid")
         if decision is None:
             reasons.append("decision_missing")
@@ -207,6 +305,14 @@ def evaluate_records(
         state = decision.get("state") if decision and not reasons else "inconclusive"
         if state == "inconclusive" and decision:
             reasons.extend(decision.get("reasons") or ["decision_inconclusive"])
+        score = (
+            float(measurement["raw_score"])
+            if attempted
+            and measurement is not None
+            and measurement.get("status") == "ok"
+            and _finite_score(measurement.get("raw_score"))
+            else None
+        )
         targets.append(
             {
                 **{
@@ -219,11 +325,13 @@ def evaluate_records(
                         "split",
                         "generator",
                         "camera",
+                        "image_kind",
                     )
                 },
                 "history": row.get("history", []),
                 "config_id": decision.get("config_id") if decision else None,
                 "state": state,
+                "raw_score": score,
                 "positive": state in POSITIVE_STATES,
                 "resolved": state in POSITIVE_STATES | {"no_ai_signal_detected"},
                 "held": state == "inconclusive",
@@ -236,7 +344,7 @@ def evaluate_records(
     grouped = _units(targets, "source_group")
     selected = targets if unit == "image" else grouped
     breakdowns = {}
-    for field in ("history", "generator", "camera"):
+    for field in ("history", "generator", "camera", "image_kind"):
         partitions: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for target in targets:
             value = target.get(field)
@@ -257,6 +365,10 @@ def evaluate_records(
                 "positive" if target["positive"] else "negative"
             )
     reversals = sorted(group for group, values in states.items() if len(values) > 1)
+    score_groups = _group_scores(targets)
+    kind_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in score_groups:
+        kind_groups[item["image_kind"]].append(item)
     return {
         "schema_version": 1,
         "unit": unit,
@@ -269,6 +381,15 @@ def evaluate_records(
         else None,
         "config_id": next(iter(configs)) if configs else None,
         "metrics": _metrics(selected),
+        "tpr_at_fpr": {
+            "unit": "source_group",
+            "score_aggregation": "real=max(member scores); "
+            "generated/edited=min(member scores)",
+            "overall": _tpr_at_fpr(score_groups),
+            "by_image_kind": {
+                kind: _tpr_at_fpr(items) for kind, items in sorted(kind_groups.items())
+            },
+        },
         "breakdowns": breakdowns,
         "targets": targets,
         "reversals": {

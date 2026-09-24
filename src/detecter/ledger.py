@@ -43,7 +43,7 @@ def _validate_row(row: Any) -> None:
         not isinstance(item, dict) for item in history
     ):
         raise ValueError("history は加工条件オブジェクトの配列が必要です")
-    for field in ("generator", "camera"):
+    for field in ("generator", "camera", "image_kind"):
         if field in row and not isinstance(row[field], str):
             raise ValueError(f"{field} は文字列が必要です")
     if "source_image_id" in row or "source_sha256" in row:
