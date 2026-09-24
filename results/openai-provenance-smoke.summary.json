@@ -1,0 +1,38 @@
+{
+  "rows": [
+    {
+      "c2pa_detected": 0,
+      "c2pa_rate": 0.0,
+      "condition": "original",
+      "generator": "gpt-image-2",
+      "images": 1,
+      "local_c2pa_detected": 1,
+      "local_c2pa_rate": 1.0,
+      "synthid_detected": 0,
+      "synthid_rate": 0.0
+    },
+    {
+      "c2pa_detected": 0,
+      "c2pa_rate": 0.0,
+      "condition": "sns-q75",
+      "generator": "gpt-image-2",
+      "images": 1,
+      "local_c2pa_detected": 0,
+      "local_c2pa_rate": 0.0,
+      "synthid_detected": 0,
+      "synthid_rate": 0.0
+    },
+    {
+      "c2pa_detected": 0,
+      "c2pa_rate": 0.0,
+      "condition": "original",
+      "generator": "iphone-real",
+      "images": 1,
+      "local_c2pa_detected": 0,
+      "local_c2pa_rate": 0.0,
+      "synthid_detected": 0,
+      "synthid_rate": 0.0
+    }
+  ],
+  "total": 3
+}
