@@ -147,7 +147,7 @@ class HeicTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 exit_code = main(
                     [
-                        "analyze",
+                        "analyze-legacy",
                         str(broken),
                         str(valid),
                         "--skip-ufd",

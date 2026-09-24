@@ -287,7 +287,7 @@ class SynthIdReportLinkTests(unittest.TestCase):
             with redirect_stdout(output):
                 code = main(
                     [
-                        "analyze",
+                        "analyze-legacy",
                         str(image),
                         "--skip-ufd",
                         "--skip-c2pa",

@@ -32,7 +32,7 @@ uv run python -m unittest discover -s tests -v
 uv run python scripts/check_repository.py
 ```
 
-最後のコマンドは一時ディレクトリに単色画像を作り、`analyze --skip-ufd --output -`
+最後のコマンドは一時ディレクトリに単色画像を作り、`analyze-legacy --skip-ufd --output -`
 を実行します。画像は終了時に削除します。写真・評価台帳・結果・重み・秘密鍵を追跡していないことも検査します。
 APIキーは環境変数から注入してください。コミット前に `git diff --cached --stat` で対象一覧を確認し、
 `git diff --cached` でAPIキー・トークン・個人情報などが本文へ混入していないことも確認してください。
@@ -45,31 +45,21 @@ UniversalFakeDetectを初めて実行すると、固定した公式コミット�
 ## 実行
 
 画像または画像を含むディレクトリを指定します。ディレクトリは再帰的に確認します。
+`detecter analyze` は完全自動パイプラインで、1画像につき `ai_probability`
+（0.0〜1.0）、`ai_probability_percent`、`confidence`、内訳（C2PA・SynthID・
+3モデル生スコア・カメラ情報）を1行のJSONで返します。CPUのみで動き、
+外部GPUサーバーや非同期キューは不要です。
 
 ```sh
 uv run detecter analyze path/to/image.jpg
-uv run detecter analyze path/to/images --device cpu
+uv run detecter analyze path/to/images --output results/analyze.jsonl
 ```
 
-結果は標準出力に表示し、既定では `results/detections.jsonl` に追記します。保存しない場合は `--output -` を指定します。
-
-```sh
-uv run detecter analyze image.png --output results/trial.jsonl
-```
-
-C2PAだけを確認する場合は、重い画像モデルを読み込みません。
-
-```sh
-uv run detecter analyze image.png --skip-ufd --output -
-```
-
-C2PAの署名が暗号学的に有効な場合は `Valid`、指定した信頼アンカーまで検証できた場合は `Trusted` として区別します。信頼アンカーは自動取得しません。
-
-```sh
-uv run detecter analyze image.jpg \
-  --c2pa-trust-anchors path/to/anchors.pem \
-  --skip-ufd --output -
-```
+出力スキーマと各レイヤーの仕様は [docs/ai-probability.md](docs/ai-probability.md)
+を参照してください。Jev合成には `TYPESAFE_API_KEY` を環境変数で注入します。
+キーがない場合や `--no-jev` 指定時は基底確率で確定します。
+UFD暫定判定や `--decision-config` 等を使う従来の詳細解析は
+`detecter analyze-legacy` に残っています。
 
 ## Jev比較実験
 
@@ -77,7 +67,7 @@ uv run detecter analyze image.jpg \
 
 ```sh
 TYPESAFE_API_KEY='op://…' op run -- \
-  uv run detecter analyze samples/generated samples/real/photo.jpg \
+  uv run detecter analyze-legacy samples/generated samples/real/photo.jpg \
   --jev-compare --jev-derived-jpeg-of samples/real/photo.jpg \
   --output results/jev-comparison.jsonl
 ```

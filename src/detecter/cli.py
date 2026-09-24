@@ -358,12 +358,8 @@ def _dispatch_command(raw: list[str]) -> int | None:
     return int(getattr(module, target[1])(raw[1:]))
 
 
-def main(argv: list[str] | None = None) -> int:
-    raw = list(sys.argv[1:] if argv is None else argv)
-    dispatched = _dispatch_command(raw)
-    if dispatched is not None:
-        return dispatched
-    args = parser().parse_args(raw)
+def _legacy_analyze(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(list(argv or []))
     decision_config: dict[str, Any] | None = None
     decision_config_error: str | None = None
     if args.decision_config is not None:
@@ -577,6 +573,20 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if derived_directory is not None:
             derived_directory.cleanup()
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw and raw[0] == "analyze-legacy":
+        return _legacy_analyze(["analyze", *raw[1:]])
+    if raw and raw[0] == "analyze":
+        from .ai_probability import main as analyze_main
+
+        return analyze_main(raw[1:])
+    dispatched = _dispatch_command(raw)
+    if dispatched is not None:
+        return dispatched
+    return _legacy_analyze(raw)
 
 
 if __name__ == "__main__":

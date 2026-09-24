@@ -6,7 +6,7 @@
 新しい `decision` は `inconclusive` として設定欠落を記録します。
 
 ```sh
-uv run detecter analyze image.jpg \
+uv run detecter analyze-legacy image.jpg \
   --decision-config decision-config.json --output -
 ```
 
