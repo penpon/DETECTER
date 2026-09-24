@@ -12,6 +12,7 @@ GPT Image、Nano Banana、Midjourneyを中心に、画像の来歴情報と既�
 - JPEG、PNG、WebP、HEIC、HEIFの入力検証
 
 追加学習、公式外部透かし検証、Web画面、管理画面、Paperspace配備はまだ含みません。
+商用判定は現時点で未達です。詳細は[評価運用ガイド](docs/evaluation-ops-guide.md)を参照してください。
 
 ## 準備
 
