@@ -337,6 +337,53 @@ class CohortTests(unittest.TestCase):
         )
         self.assertEqual(checks["derived_condition_parity"]["status"], "met")
 
+    def test_build_ledger_rejects_camera_missing_real_by_default(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            real_root = root / "real"
+            real_root.mkdir()
+            make_photo(real_root / "a.jpg", model="")
+            value = manifest(
+                [
+                    {
+                        "root": str(real_root),
+                        "label": "real",
+                        "source": "所有者による撮影",
+                        "license": "評価利用のみ",
+                        "id_prefix": "real",
+                        "inventory": str(_inventory(real_root, root, "real.jsonl")),
+                    }
+                ],
+                {"minimum_real_groups": 1},
+            )
+            rows, build = build_ledger(value, base=root)
+            self.assertEqual(rows, [])
+            self.assertEqual(build["sources"][0]["skipped"], {"camera_missing": 1})
+
+    def test_build_ledger_allows_camera_missing_real_when_opted_in(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            real_root = root / "real"
+            real_root.mkdir()
+            make_photo(real_root / "a.jpg", model="")
+            value = manifest(
+                [
+                    {
+                        "root": str(real_root),
+                        "label": "real",
+                        "source": "所有者による撮影",
+                        "license": "評価利用のみ",
+                        "id_prefix": "real",
+                        "inventory": str(_inventory(real_root, root, "real.jsonl")),
+                    }
+                ],
+                {"minimum_real_groups": 1},
+            )
+            rows, build = build_ledger(value, base=root, allow_missing_camera=True)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["camera"], "unknown")
+            self.assertEqual(build["sources"][0]["skipped"], {"camera_unknown": 1})
+
     def test_cli_build_and_report_round_trip(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
