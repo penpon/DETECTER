@@ -218,12 +218,9 @@ def apply_decision(
             validate_config(config, measurement, usage=usage)
         except ValueError as error:
             reasons.append(_decision_reason(error))
-        if (
-            not isinstance(threshold, (int, float))
-            or isinstance(threshold, bool)
-            or not 0 <= threshold <= 1
-        ):
-            reasons.append("threshold_invalid")
+        # Thresholds share the score scale of their own detector (contracts.md:
+        # raw scores are not probabilities), so only finiteness is required here.
+        # validate_config above already rejects non-finite thresholds.
         for required in config_data.get("required_provenance", []):
             value: Any = provenance
             for part in str(required).split("."):
