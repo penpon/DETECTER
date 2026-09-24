@@ -23,3 +23,8 @@ data/
 *-ai-image-detection-grilling.json
 samples/generated/
 samples/real/
+
+# Local evaluation media and generation receipts (never committed)
+iphone-picture/
+ai-picture/
+receipts/
