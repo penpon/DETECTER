@@ -1,5 +1,18 @@
 # Third-party components
 
+## EFFORT (measurement script only, no vendored code)
+
+- [Effort-AIGI-Detection](https://github.com/YZY-stack/Effort-AIGI-Detection), commit `96f5dea2b534d400cfd7003f053c7e93c8e16461` — CC BY-NC 4.0 (evaluation use only; not for service deployment).
+- [General-AIGI weights (CLIP-L/14 + Effort, GenImage sdv1.4)](https://drive.google.com/file/d/1UXf1hC9FC1yV93uKwXSkdtepsgpIAU9d/view?usp=sharing), SHA-256 `7c32ceb4e66d303050e8fc5dc7543fa347693fb4ee6b5df4d6eaf9f6a92fb813` — same CC BY-NC 4.0 terms as the repository.
+- [Base model](https://huggingface.co/openai/clip-vit-large-patch14), revision `32bd64288804d66eefd0ccbe215aa642df71cc41` — MIT code; review the model terms before service deployment.
+
+`scripts/measure_effort.py` imports only the SVD-residual transform from an
+external checkout of the pinned commit at runtime and reimplements the
+backbone-plus-head wiring. No upstream file is copied into this repository.
+The checkpoint layout matches the DeepfakeBench-framework `EffortDetector`
+(`backbone` + two-class `head`), so scores are
+`softmax(logits, dim=1)[1]` (fake probability), matching upstream `demo.py`.
+
 - [c2pa-python](https://github.com/contentauth/c2pa-python), version 0.37.10 — MIT OR Apache-2.0.
 - [TypeSafe Python SDK](https://github.com/typesafe-ai/typesafe-sdk-python), version 0.7.1 — see the upstream package license.
 - [UniversalFakeDetect](https://github.com/WisconsinAIVision/UniversalFakeDetect), commit `030495aea3300a8b54c0ec37ec7fe1dd7e63c619` — MIT.
@@ -59,3 +72,20 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## EFFORT (Effort-AIGI-Detection)
+
+- [Official code](https://github.com/YZY-stack/Effort-AIGI-Detection), commit `96f5dea2b534d400cfd7003f053c7e93c8e16461` — CC BY-NC 4.0 (non-commercial evaluation use only).
+- [GenImage sdv1.4 checkpoint](https://drive.google.com/file/d/1UXf1hC9FC1yV93uKwXSkdtepsgpIAU9d/view?usp=sharing), Drive file `1UXf1hC9FC1yV93uKwXSkdtepsgpIAU9d` — CC BY-NC 4.0, SHA-256 `7c32ceb4e66d303050e8fc5dc7543fa347693fb4ee6b5df4d6eaf9f6a92fb813`.
+- [Base model](https://huggingface.co/openai/clip-vit-large-patch14), revision `32bd64288804d66eefd0ccbe215aa642df71cc41` — review the model terms before service deployment.
+- [loralib](https://github.com/microsoft/LoRA), version 0.1.2 — MIT (required to import the upstream SVD layers).
+
+Upstream code is NOT vendored: `scripts/measure_effort.py` imports the SVD
+residual layers at runtime from an external EFFORT checkout pinned to the
+commit above, wires the DeepfakeBench `EffortDetector` structure (CLIP
+ViT-L/14 vision backbone + 2-class head, softmax fake probability), and
+strict-loads the checkpoint after stripping the DataParallel `module.`
+prefix. So-Fake-R1 and GlobalForge were deferred (see
+`docs/cohort-issue62-robust-detectors.md`): So-Fake-R1 needs CUDA and a
+9-stage VLM pipeline (infeasible for 715 CPU groups), and no public weight
+URL could be confirmed for GlobalForge.
