@@ -145,6 +145,9 @@ def _source_rows(
         raise TypeError("history は配列が必要です")
     if label == "edited" and not history:
         raise ValueError("edited には加工履歴が必要です")
+    image_kind = entry.get("image_kind") or "unknown"
+    if not isinstance(image_kind, str):
+        raise TypeError("image_kind は文字列が必要です")
     rows: list[dict[str, Any]] = []
     reasons: Counter[str] = Counter()
     for index, item in enumerate(inventory, 1):
@@ -166,6 +169,7 @@ def _source_rows(
             "split": entry.get("split") or "unassigned",
             "history": history,
             "format": item["format"],
+            "image_kind": image_kind,
         }
         if label == "real":
             camera = " ".join(value for value in (item["make"], item["model"]) if value)
