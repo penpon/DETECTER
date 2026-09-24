@@ -156,6 +156,125 @@ def inspect_image(path: Path, *, max_bytes: int = MAX_INPUT_BYTES) -> dict[str, 
     }
 
 
+# Structured EXIF tags only. Free-text fields (UserComment, ImageDescription,
+# Artist, XP*, maker notes) are never returned so their bytes cannot reach a
+# prompt or a label.
+_EXIF_CAMERA_TAGS = {
+    0x010F: "make",
+    0x0110: "model",
+    0x0131: "software",
+    0x829A: "exposure_time",
+    0x829D: "f_number",
+    0x8827: "iso_speed",
+    0x8830: "sensitivity_type",
+    0x9003: "datetime_original",
+    0x9004: "datetime_digitized",
+    0x9201: "shutter_speed",
+    0x9202: "aperture",
+    0x9204: "exposure_bias",
+    0x9207: "metering_mode",
+    0x9209: "flash",
+    0x920A: "focal_length",
+    0xA002: "pixel_x_dimension",
+    0xA003: "pixel_y_dimension",
+    0xA405: "focal_length_35mm",
+    0xA406: "scene_capture_type",
+    0xA431: "serial_number",
+    0xA432: "lens_specification",
+    0xA433: "lens_make",
+    0xA434: "lens_model",
+    0xA435: "lens_serial_number",
+}
+_EXIF_SUB_IFD_TAGS = (0x8769, 0x8825, 0xA005)
+# Apple maker-note IFD keys that only appear after computational processing.
+_COMPUTATIONAL_EXIF_TAGS = {0xA46A: "hdr_gain_map_version", 0xA460: "composite_image"}
+_COMPUTATIONAL_KEYWORDS = ("smart hdr", "deep fusion", "night mode", "hdr+")
+
+
+def _exif_scalar(value: Any) -> Any:
+    """Return a JSON-safe scalar or None; never a free-text payload."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        text = value.strip().replace("\x00", "")
+        return text[:128] if text else None
+    try:  # PIL IFDRational and similar numerator/denominator pairs
+        numerator, denominator = value
+        denominator = float(denominator)
+        if denominator == 0:
+            return None
+        return round(float(numerator) / denominator, 6)
+    except (TypeError, ValueError):
+        return None
+
+
+def _exif_text_signals(value: Any) -> str:
+    """Flatten a value to lowercase text for flag detection only."""
+    if isinstance(value, (list, tuple)):
+        return " ".join(_exif_text_signals(item) for item in value)
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8", errors="ignore")
+        except ValueError:
+            return ""
+    return str(value).lower()
+
+
+def inspect_exif_sanitized(path: Path) -> dict[str, Any]:
+    """Read structured camera EXIF with all free-text fields physically excluded.
+
+    Unsigned metadata is diagnostic context only; it is never proof that an
+    image is a real photograph.
+    """
+    camera: dict[str, Any] = {}
+    flags: set[str] = set()
+    try:
+        ensure_heif_opener()
+        with Image.open(path) as image:
+            exif = image.getexif()
+            queue = [exif]
+            for tag in _EXIF_SUB_IFD_TAGS:
+                try:
+                    queue.append(exif.get_ifd(tag))
+                except (KeyError, TypeError, ValueError):
+                    continue
+            for ifd in queue:
+                if not hasattr(ifd, "items"):
+                    continue
+                for tag, value in ifd.items():
+                    name = _EXIF_CAMERA_TAGS.get(tag)
+                    if name is not None and name not in camera:
+                        scalar = _exif_scalar(value)
+                        if scalar is not None:
+                            camera[name] = scalar
+                    if tag in _COMPUTATIONAL_EXIF_TAGS:
+                        flags.add("marker_tag")
+                    signals = _exif_text_signals(value)
+                    if any(word in signals for word in _COMPUTATIONAL_KEYWORDS):
+                        flags.add("marker_text")
+    except (OSError, ValueError) as error:
+        return {
+            "status": "error",
+            "camera": {},
+            "signed": False,
+            "proof_of_real": False,
+            "computational_photography_detected": False,
+            "error": f"{type(error).__name__}: {error}",
+        }
+    return {
+        "status": "ok",
+        "camera": camera,
+        "signed": False,
+        "proof_of_real": False,
+        "computational_photography_detected": bool(flags),
+        "computational_markers": sorted(flags),
+    }
+
+
 def tile_bounds(
     width: int,
     height: int,
@@ -584,12 +703,20 @@ def inspect_c2pa(
             verification["confirmation_state"] = "unverifiable"
         if "validation_failed" not in verification["reasons"]:
             verification["reasons"].append("validation_failed")
+    hardware_text = " ".join(
+        _exif_text_signals(signature_info.get(key))
+        for key in ("certificates", "issuer", "organization", "common_name")
+    )
+    hardware_signed = any(
+        word in hardware_text for word in ("secure enclave", "strongbox")
+    )
     return {
         "status": "present",
         "manifest_present": True,
         "active_manifest": store.get("active_manifest"),
         "claim_generator": active.get("claim_generator"),
         "issuer": signature_info.get("issuer"),
+        "hardware_signed": hardware_signed,
         "validation_state": validation_state,
         "cryptographically_valid": verification["signature_state"] == "valid",
         "trusted": verification["trust_state"] == "trusted",
@@ -875,6 +1002,46 @@ def build_jev_state(
     }
 
 
+def deterministic_bypass(
+    c2pa_result: dict[str, Any],
+    synthid_summary: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Return a final ai_probability when verified provenance settles the verdict.
+
+    Only cryptographically trusted evidence bypasses the passive model:
+    a hardware-signed (Secure Enclave / StrongBox) C2PA manifest without an AI
+    claim settles 0.0, a confirmed C2PA AI claim or a detected SynthID watermark
+    settles 1.0. Unsigned EXIF is never evidence and carries zero weight.
+    """
+    confirmed = bool(c2pa_result.get("confirmed"))
+    if confirmed and _has_ai_claim(c2pa_result):
+        return {
+            "ai_probability": 1.0,
+            "state": "ai_confirmed",
+            "basis": "c2pa_ai_claim",
+        }
+    # Manual screen reports stay unverified evidence; only an automatically
+    # verified high-confidence detection bypasses the model.
+    if (
+        isinstance(synthid_summary, dict)
+        and synthid_summary.get("state") == "detected"
+        and synthid_summary.get("status") == "linked"
+        and synthid_summary.get("automatically_verified")
+    ):
+        return {
+            "ai_probability": 1.0,
+            "state": "ai_confirmed",
+            "basis": "synthid_detected",
+        }
+    if confirmed and c2pa_result.get("hardware_signed"):
+        return {
+            "ai_probability": 0.0,
+            "state": "real_confirmed",
+            "basis": "c2pa_hardware_signed",
+        }
+    return None
+
+
 def provisional_verdict(
     c2pa_result: dict[str, Any], ufd_result: dict[str, Any]
 ) -> dict[str, Any]:
@@ -981,6 +1148,15 @@ def analyze_image(
         sha256=media["sha256"],
         records=synthid_records,
     )
+    exif = inspect_exif_sanitized(resolved)
+    bypass = deterministic_bypass(c2pa_result, synthid)
+    if bypass is not None:
+        verdict: dict[str, Any] = {**bypass, "experimental": True}
+    else:
+        verdict = {
+            "ai_probability": None,
+            **provisional_verdict(c2pa_result, ufd_result),
+        }
     return {
         "schema_version": 1,
         "analyzed_at": datetime.now(UTC).isoformat(),
@@ -989,6 +1165,7 @@ def analyze_image(
         "c2pa": c2pa_result,
         "universal_fake_detect": ufd_result,
         "synthid": synthid,
-        "verdict": provisional_verdict(c2pa_result, ufd_result),
+        "exif": exif,
+        "verdict": verdict,
         "duration_ms": round((time.perf_counter() - started) * 1000, 3),
     }
