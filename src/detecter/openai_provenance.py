@@ -16,9 +16,9 @@ from .core import inspect_c2pa, inspect_image
 
 API_URL = "https://api.openai.com/v1/content_provenance_checks"
 API_TIMEOUT = 60
-MAX_RETRIES = 3
+MAX_RETRIES = 8
 SUPPORTED_TYPES = {"image/png", "image/jpeg", "image/webp"}
-_SLEEP_BASE = 1.0
+_SLEEP_BASE = 2.0
 
 
 def _media_type(path: Path) -> str:
