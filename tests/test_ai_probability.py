@@ -143,18 +143,31 @@ class UnifiedSchemaTests(unittest.TestCase):
             self.assertNotIn(str(image), json.dumps(state))
             self.assertNotIn(record["sha256"], json.dumps(state))
 
-    def test_jev_unavailable_falls_back_to_base_probability(self):
+    def test_default_verdict_uses_statistical_fusion(self):
         with tempfile.TemporaryDirectory() as directory:
             image = Path(directory) / "generated.png"
             make_generated(image)
             with stub_scores(-3.0, 0.9, 0.65):
                 record = analyze_image(image, jev_client=None)
-            base = record["breakdown"]["base_probability"]["probability"]
-            self.assertAlmostEqual(record["ai_probability"], base, places=6)
-            self.assertGreater(base, 0.8)
-            self.assertEqual(record["state"], "jev_unavailable")
-            self.assertEqual(
-                record["breakdown"]["jev"]["reason"], "jev_client_unavailable"
+            fusion = record["breakdown"]["fusion"]
+            self.assertEqual(record["state"], fusion["state"])
+            self.assertIsNone(record["breakdown"]["jev"])
+            self.assertIn(fusion["state"], {"ai_likely", "inconclusive"})
+            self.assertIsNotNone(fusion["fusion"]["ranks"])
+
+    def test_jev_flag_restores_jev_verdict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "generated.png"
+            make_generated(image)
+            client = jev_client(0.92, "ai_generated")
+            with stub_scores(-3.0, 0.9, 0.65):
+                record = analyze_image(image, jev_client=client)
+            self.assertEqual(record["state"], "ai_generated")
+            self.assertEqual(record["breakdown"]["jev"]["status"], "ok")
+            # The statistical fusion result is still recorded for ablation.
+            self.assertIn(
+                record["breakdown"]["fusion"]["state"],
+                {"ai_likely", "inconclusive"},
             )
 
     def test_all_models_missing_is_inconclusive_not_crash(self):
@@ -306,7 +319,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             factory.assert_not_called()
             record = json.loads(output.getvalue().splitlines()[-1])
-            self.assertEqual(record["state"], "jev_unavailable")
+            self.assertEqual(record["state"], record["breakdown"]["fusion"]["state"])
 
 
 if __name__ == "__main__":
