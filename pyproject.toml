@@ -42,3 +42,6 @@ detecter = "detecter.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+detecter = ["data/*.json"]

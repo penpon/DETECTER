@@ -8,12 +8,13 @@ Layers run without any human step:
    UniversalFakeDetect on CPU.
 3. Statistical calibration (#40): logistic fusion of the raw scores into a
    base AI probability.
-4. Jev final composition (#42): one System One call folds sanitized metadata
-   and the base probability into ``final_ai_probability`` and ``confidence``.
+4. Calibrated statistical fusion (#67): a rank-feature logistic model fit
+   on the tuning cohort maps the passive scores to the shared 4-state
+   verdict. Jev composition (#42) stays available via ``--jev`` for
+   ablation comparisons only.
 
 Models and the Jev client are built lazily so a deterministic bypass never
-loads a detector, and a missing Jev key degrades to the base probability
-instead of failing the command.
+loads a detector. The default path never touches the network.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from .core import (
     inspect_image,
 )
 from .final_probability import JEV_MODEL, final_ai_probability
+from .fusion import fusion_verdict
 
 SCHEMA_VERSION = 1
 
@@ -163,6 +165,7 @@ def analyze_image(
     jev_client: Any = None,
     detectors: dict[str, Any] | None = None,
     synthid_records: Any = None,
+    image_kind: str | None = None,
 ) -> dict[str, Any]:
     """Run the whole pipeline for one image and return the unified record."""
     started = time.perf_counter()
@@ -196,7 +199,7 @@ def analyze_image(
             "deterministic_bypass",
             "passive_inference",
             "statistical_calibration",
-            "jev_composition",
+            "statistical_fusion",
         ],
         "media": media,
         "c2pa": c2pa,
@@ -272,8 +275,19 @@ def analyze_image(
         base = None
 
     category = device_category(exif)
+    kind = image_kind or (
+        "photo" if category in {"smartphone", "camera"} else "unknown"
+    )
+    verdict = fusion_verdict(
+        cf_score=cf_score,
+        cure_score=cure_score,
+        ufd_score=ufd_score,
+        c2pa=c2pa,
+        synthid=synthid,
+        image_kind=kind,
+    )
     if jev_client is not None:
-        final = final_ai_probability(
+        jev = final_ai_probability(
             jev_client,
             cf_score=cf_score,
             cure_score=cure_score,
@@ -287,20 +301,21 @@ def analyze_image(
             ),
         )
     else:
-        final = {"status": "skipped", "reason": "jev_client_unavailable"}
+        jev = None
 
-    if base is None:
-        probability = 0.0
-        confidence = 0.0
-        state = "inconclusive"
-    elif final.get("status") == "ok":
-        probability = float(final["final_ai_probability"])
-        confidence = float(final["confidence"])
-        state = str(final.get("ai_involvement") or "inconclusive")
+    if jev is not None and jev.get("status") == "ok" and base is not None:
+        # --jev comparison mode: Jev drives the verdict like #42 did.
+        probability = float(jev["final_ai_probability"])
+        confidence = float(jev["confidence"])
+        state = str(jev.get("ai_involvement") or "inconclusive")
     else:
-        probability = float(base["probability"])
-        confidence = 0.25 if base["partial"] else 0.5
-        state = "jev_unavailable" if jev_client is None else "jev_error"
+        probability = verdict["probability"]
+        if probability is None:
+            probability = 0.0
+            confidence = 0.0
+        else:
+            confidence = 0.25 if verdict["fusion"]["partial"] else 0.5
+        state = verdict["state"]
     probability = min(1.0, max(0.0, probability))
 
     record.update(
@@ -319,12 +334,13 @@ def analyze_image(
             },
             "models": models,
             "base_probability": base,
+            "fusion": verdict,
             "camera": exif.get("camera", {}),
             "device_category": category,
             "computational_photography_detected": bool(
                 exif.get("computational_photography_detected")
             ),
-            "jev": final,
+            "jev": jev,
         },
     )
     record["duration_ms"] = round((time.perf_counter() - started) * 1000, 3)
@@ -357,9 +373,14 @@ def parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-dir", type=Path, default=default_cache_dir())
     parser.add_argument("--device", choices=("auto", "cpu"), default="cpu")
     parser.add_argument(
+        "--jev",
+        action="store_true",
+        help="比較用にJev合成を実行し最終判定へ使います（既定は統計統合）",
+    )
+    parser.add_argument(
         "--no-jev",
         action="store_true",
-        help="Jev合成をスキップし、基底確率で確定します",
+        help="非推奨: 既定が統計統合のため何もしません",
     )
     parser.add_argument(
         "--c2pa-trust-anchors",
@@ -396,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     jev_client = None
-    if not args.no_jev:
+    if args.jev:
         try:
             jev_client = _create_jev_client()
         except Exception as error:  # noqa: BLE001
